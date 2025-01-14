@@ -798,14 +798,13 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                     car_detail_list.append("NA")
                     car_detail_list.append("NA")
                     car_detail_list.append(image)
-                    symbol_car_key = f"{train_data['metadata']['job_id']}-{car_id}"
+                    symbol_car_key = f"SymbolNotFound-{car_id}"
 
                 if symbol_car_key not in processed_symbol_car_keys:
                     processed_symbol_car_keys.add(symbol_car_key)
 
-                update_tracking_dict(tracking_dict, processed_symbol_car_keys)
-
-                car_list.append(car_detail_list)
+                if symbol_car_key not in tracking_dict:
+                    car_list.append(car_detail_list)
 
             corridor_grouped_cars = group_by_corridor(car_list)
             corr_symbol_car_grps = group_by_train_symbol(corridor_grouped_cars)
@@ -816,7 +815,9 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         if processed_pass_data:
             body, attachments = format_email_body(processed_pass_data, logger)
             send_email(body, logger, attachments)
+            update_tracking_dict(tracking_dict, processed_symbol_car_keys)
             save_tracking_dict(tracking_dict)
+            
         else:
             update_tracking_dict(tracking_dict)
             save_tracking_dict(tracking_dict)
