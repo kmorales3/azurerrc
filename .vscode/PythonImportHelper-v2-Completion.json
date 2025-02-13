@@ -555,6 +555,15 @@
         "documentation": {}
     },
     {
+        "label": "os.environ[\"REQUESTS_CA_BUNDLE\"]",
+        "kind": 5,
+        "importPath": "function_app",
+        "description": "function_app",
+        "peekOfCode": "os.environ[\"REQUESTS_CA_BUNDLE\"] = ''\napp = func.FunctionApp()\n# Constants\nMAX_EMAIL_SIZE = 20 * 1024 * 1024  # 20MB\nCENTRAL_TZ = pytz.timezone(\"US/Central\")\nMOUNTAIN_TZ = pytz.timezone(\"US/Mountain\")\nUTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,",
+        "detail": "function_app",
+        "documentation": {}
+    },
+    {
         "label": "app",
         "kind": 5,
         "importPath": "function_app",

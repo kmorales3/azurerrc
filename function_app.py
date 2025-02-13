@@ -28,6 +28,8 @@ from opencensus.ext.azure.log_exporter import AzureLogHandler
 import azure.functions as func
 import itertools
 
+os.environ["REQUESTS_CA_BUNDLE"] = ''
+
 app = func.FunctionApp()
 
 # Constants
@@ -86,8 +88,126 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         def add_detection(self, detection):
             self.pass_detections.append(detection.__dict__)
+            
+            
+    def process_car_images(grouped_cars, model, crop_size=(2200, 1024), confidence_threshold=0.46, proximity_threshold=1100):
+        """
+        Process car images, run inference on in-memory images (from Azure), and group detections into regions.
+        
+        Parameters:
+            grouped_cars (list of tuples): Each tuple contains (car_id, list of image blobs).
+                                        image blobs are binary image data read from Azure.
+            model (YOLO model): Pretrained YOLO model for inference.
+            crop_size (tuple): Size of the crop (width, height).
+            confidence_threshold (float): Minimum confidence to consider a detection.
+            proximity_threshold (int): Maximum pixel distance between x-coordinates to group detections into regions.
+        
+        Returns:
+            dict: A dictionary with car_id as the key and a list of cropped image blobs as the value.
+        """
+        result = {}
 
-        # Function to create TrainPass objects from car_grouped_symbols
+        for car_id, image_blobs in grouped_cars:
+            print(f"Processing car {car_id}...")  # Optional: For debugging
+            all_detections = []
+
+            # Run inference on each in-memory image blob
+            for image_blob in image_blobs:
+                image = Image.open(io.BytesIO(image_blob))  # Load the image from the blob
+                detections = run_inference(image, model, confidence_threshold)
+                for det in detections:
+                    det['image_blob'] = image_blob  # Add the image blob to each detection for reference
+                all_detections.extend(detections)
+
+            if not all_detections:
+                print(f"No detections for car {car_id}. Skipping.")
+                continue
+
+            # Group detections into regions based on proximity
+            all_detections.sort(key=lambda det: det['x'])
+            regions = group_detections(all_detections, proximity_threshold)
+
+            # Select the highest-confidence detection for each region and crop the corresponding image
+            crops = []
+            for region in regions:
+                best_detection = max(region, key=lambda det: det['confidence'])
+                crop = crop_image(best_detection['image_blob'], best_detection['x'], crop_size)
+                if crop:
+                    crops.append(crop)
+
+            # Store crops in result dict
+            result[car_id] = crops
+
+        return result
+
+    def run_inference(image, model, confidence_threshold, target_height=1024):
+        """
+        Run inference on an in-memory image using the YOLO model after resizing it to a target height while preserving aspect ratio.
+        
+        Parameters:
+            image (PIL Image): In-memory image loaded from Azure.
+            model (YOLO): YOLO model instance.
+            confidence_threshold (float): Minimum confidence to consider a detection.
+            target_height (int): Target height for resizing the image.
+        
+        Returns:
+            list: List of detections, each containing x, width, confidence.
+        """
+        # Resize image while maintaining aspect ratio
+        width, height = image.size
+        scale_factor = target_height / height
+        target_width = int(width * scale_factor)
+        image = image.resize((target_width, target_height), Image.ANTIALIAS)
+        
+        results = model(image)  # Pass the resized PIL image to the YOLO model
+        detections = []
+
+        for det in results.xyxy[0].cpu().numpy():  # Adjust based on your YOLO model's output format
+            x = int((det[0] + det[2]) / 2)  # Center x-coordinate
+            width = int(det[2] - det[0])
+            confidence = float(det[4])
+            if confidence >= confidence_threshold:
+                detections.append({'x': x, 'width': width, 'confidence': confidence})
+
+        return detections
+
+    def crop_and_normalize(image, detection, target_width=2200, target_height=1024):
+        """
+        Crop a 2200x1024 region around the detection center while ensuring the crop stays within image boundaries.
+        Resizes the crop if necessary to ensure uniform size.
+        
+        Parameters:
+            image (PIL Image): Resized image after inference.
+            detection (dict): Detection containing x, width, confidence.
+            target_width (int): Target width for the crop (default: 2200).
+            target_height (int): Target height for the crop (default: 1024).
+        
+        Returns:
+            PIL Image: Cropped and resized image.
+        """
+        img_width, img_height = image.size
+        center_x = detection['x']
+
+        # Calculate crop box coordinates
+        left = max(0, center_x - target_width // 2)
+        right = min(img_width, left + target_width)
+        top = 0
+        bottom = target_height
+
+        # Adjust if right edge exceeds the image width
+        if right - left < target_width:
+            left = max(0, img_width - target_width)
+            right = img_width
+
+        crop_box = (left, top, right, bottom)
+        cropped_image = image.crop(crop_box)
+
+        # Ensure the cropped image is always target_width x target_height
+        cropped_image = cropped_image.resize((target_width, target_height), Image.ANTIALIAS)
+
+        return cropped_image     
+    
+    # Function to create TrainPass objects from car_grouped_symbols
     def create_train_pass_objects(car_grouped_symbols):
         train_pass_objects = []
 
@@ -358,7 +478,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
     def load_tracking_dict():
         key_vault_name = os.environ["KEY_VAULT_NAME"]
         secret_name = "tracking-dict"
-        kv_uri = f"https://{key_vault_name}.vault.azure.net"
+        kv_uri = f"https://{key_vault_name}.vault.azure.net/"
 
         credential = DefaultAzureCredential()
         client = SecretClient(vault_url=kv_uri, credential=credential)
@@ -711,12 +831,10 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
     if myTimer.past_due:
         logging.info('The timer is past due!')
 
-    if "TRACKING_DICT" not in os.environ:
-        os.environ["TRACKING_DICT"] = json.dumps({})
-
     procd_train_data = {}
 
     # Set up logging to Azure or merging Application Insights
+    print('logger starting...')
     logger = logging.getLogger(__name__)
     logger.addHandler(
         AzureLogHandler(
@@ -729,11 +847,13 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
     container_name = os.environ.get("CONT_NAME")
     container_client = blob_service_client. \
         get_container_client(container_name)
+    print('container retrieved ...')
 
     # Get recent blobs modified within the last 15 minutes and 10 seconds
     recent_passes = get_recent_passes(
         container_client, seconds=int(os.environ.get("SECONDS_TO_LK_BACK"))
     )
+    print('pass data collected . . . ')
 
     tracking_dict = load_tracking_dict()
 
