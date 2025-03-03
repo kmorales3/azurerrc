@@ -13,22 +13,23 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import random
+import csv
 
 # Third-Party Imports
 import pandas as pd
+import base64
 import pytz
 import requests
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageOps
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 from azure.keyvault.secrets import SecretClient
-from opencensus.ext.azure.log_exporter import AzureLogHandler
+from ultralytics import YOLO
 
 # Azure Functions Imports
 import azure.functions as func
 import itertools
-
-os.environ["REQUESTS_CA_BUNDLE"] = ''
 
 app = func.FunctionApp()
 
@@ -42,6 +43,10 @@ TIMEZONES = {
     "Central": CENTRAL_TZ,
     "UTC": UTC_TZ,
 }
+MODEL_PATH = r'/Users/kevinmorales/Documents/Work Stuff/azurerrc/azurerrc/azurerrc/best.pt'
+LOCAL_RUN = True
+LOCAL_PASS_DIR = r'/Users/kevinmorales/Downloads/pd/batch_5
+LOG_FILE = "inference_log.csv"
 
 
 @app.timer_trigger(schedule="0 */1 * * * *", arg_name="myTimer",
@@ -58,18 +63,20 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 "Camera ID": "",
             }
 
-            self.image = None
+            self.car_image = None
+            self.crops = []
 
-        def create_detection(self, creation_time, car_id, camera, image):
+        def create_detection(self, creation_time, car_id, camera, image, crops):
             self.detection_data["Created at"] = creation_time
             self.detection_data["Car ID"] = car_id
             self.detection_data["Intermodal Container ID"] = "Not Visible"
             self.detection_data["Camera ID"] = camera
 
-            self.image = image
+            self.car_image = image
+            self.crops = crops
 
         def get_image(self):
-            return self.image
+            return self.car_image, self.crops
 
     class TrainPass:
         def __init__(self):
@@ -88,90 +95,222 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         def add_detection(self, detection):
             self.pass_detections.append(detection.__dict__)
-            
-            
-    def process_car_images(grouped_cars, model, crop_size=(2200, 1024), confidence_threshold=0.46, proximity_threshold=1100):
+
+    def process_car_images(grouped_cars, model, confidence_threshold, crop_size=(2200, 1024), proximity_threshold=1100):
         """
-        Process car images, run inference on in-memory images (from Azure), and group detections into regions.
+        Process car images, run inference on in-memory images (from Azure), group detections into regions,
+        pare down car_details to the highest camera entry, and append crops to that entry.
         
         Parameters:
-            grouped_cars (list of tuples): Each tuple contains (car_id, list of image blobs).
-                                        image blobs are binary image data read from Azure.
+            grouped_cars (dict): Original nested structure of grouped_cars (corridor -> train_symbol -> car_id -> detections).
             model (YOLO model): Pretrained YOLO model for inference.
             crop_size (tuple): Size of the crop (width, height).
             confidence_threshold (float): Minimum confidence to consider a detection.
             proximity_threshold (int): Maximum pixel distance between x-coordinates to group detections into regions.
         
         Returns:
-            dict: A dictionary with car_id as the key and a list of cropped image blobs as the value.
+            dict: The original grouped_cars structure with only the highest camera entry per car and crops appended.
         """
-        result = {}
+        # Create copies of structures to store valid entries
+        updated_grouped_cars = {}
 
-        for car_id, image_blobs in grouped_cars:
-            print(f"Processing car {car_id}...")  # Optional: For debugging
-            all_detections = []
+        for corridor, train_symbols in grouped_cars.items():
+            updated_train_symbols = {}
 
-            # Run inference on each in-memory image blob
-            for image_blob in image_blobs:
-                image = Image.open(io.BytesIO(image_blob))  # Load the image from the blob
-                detections = run_inference(image, model, confidence_threshold)
-                for det in detections:
-                    det['image_blob'] = image_blob  # Add the image blob to each detection for reference
-                all_detections.extend(detections)
+            for train_symbol, cars in train_symbols:
+                updated_cars = {}
 
-            if not all_detections:
-                print(f"No detections for car {car_id}. Skipping.")
-                continue
+                for car_id, car_details in cars:
+                    print(f"Processing car {car_id}...")  # Debug message
+                    all_detections = []
+                    max_width = 0
+                    
+                    # FIRST PASS: Find the max width in one loop
+                    for detection in car_details:
+                        image = Image.open(io.BytesIO(detection[13]))  # Load image
+                        max_width = max(max_width, image.width)
 
-            # Group detections into regions based on proximity
-            all_detections.sort(key=lambda det: det['x'])
-            regions = group_detections(all_detections, proximity_threshold)
+                    # Run inference on each image blob and collect detections
+                    for detection in car_details:
+                        # Extract camera position from the filename
+                        is_left_camera = "L" in detection[2]  # Assuming detection[2] contains B#C# info
+                        image = Image.open(io.BytesIO(detection[13]))  # Load the image from the blob
+                        detections = run_inference(image, model,
+                                                   is_left_camera,
+                                                   confidence_threshold,
+                                                   max_width)
 
-            # Select the highest-confidence detection for each region and crop the corresponding image
-            crops = []
-            for region in regions:
-                best_detection = max(region, key=lambda det: det['confidence'])
-                crop = crop_image(best_detection['image_blob'], best_detection['x'], crop_size)
-                if crop:
-                    crops.append(crop)
+                        for det in detections:
+                            det['image_blob'] = detection[13]  # Add the image blob to each detection for reference
+                        all_detections.extend(detections)
 
-            # Store crops in result dict
-            result[car_id] = crops
+                    # Skip cars with no detections
+                    if not all_detections:
+                        print(f"No detections for car {car_id}. Skipping.")
+                        continue
 
-        return result
+                    # Group detections into regions and select the highest-confidence crops
+                    all_detections.sort(key=lambda det: det['x'])
+                    regions = group_detections(all_detections, proximity_threshold)
+                    crops = []
+                    for region in regions:
+                        best_detection = max(region, key=lambda det: det['confidence'])
+                        crop = crop_and_normalize(best_detection['image_blob'], best_detection['x'])
+                        if crop:
+                            crops.append(crop)
 
-    def run_inference(image, model, confidence_threshold, target_height=1024):
+                    # Find the highest camera entry and keep only that one
+                    highest_camera_entry = max(car_details, key=lambda entry: extract_camera_value(entry))
+                    highest_camera_entry.append({'crops': crops})
+                    updated_cars[car_id] = [highest_camera_entry]
+
+                # Only add train_symbol if it contains valid cars
+                if updated_cars:
+                    updated_train_symbols[train_symbol] = updated_cars
+
+            # Only add corridor if it contains valid train symbols
+            if updated_train_symbols:
+                updated_grouped_cars[corridor] = updated_train_symbols
+
+        return updated_grouped_cars
+
+    def extract_camera_value(entry):
         """
-        Run inference on an in-memory image using the YOLO model after resizing it to a target height while preserving aspect ratio.
-        
+        Extract the camera value from an entry based on the B#C# pattern.
+
+        Parameters:
+            entry (list): A car detail entry containing the camera string.
+
+        Returns:
+            int: A numerical representation of the camera for comparison.
+        """
+        try:
+            camera_string = entry[7]  # Assuming the camera string is at index 1 (adjust if needed)
+            b, c = map(int, camera_string.split('C'))  # Split on 'C' and convert to integers
+            return b * 100 + c  # Combine B and C values to create a sortable number (e.g., B4C2 -> 402)
+        except (ValueError, IndexError):
+            return 0  # Return a default value if extraction fails
+
+    def augment_image(image):
+        """
+        Apply a series of random augmentations to simulate different image conditions.
+
+        Parameters:
+            image (PIL Image): Original image.
+
+        Returns:
+            List[PIL Image]: A list of augmented versions of the original image.
+        """
+        augmented_images = [image]  # Always include the original
+
+        # Contrast & Brightness Variations
+        contrast = ImageEnhance.Contrast(image)
+        brightness = ImageEnhance.Brightness(image)
+        sharpness = ImageEnhance.Sharpness(image)
+
+        augmented_images.append(contrast.enhance(random.uniform(0.8, 1.2)))  # Slight contrast shift
+        augmented_images.append(brightness.enhance(random.uniform(0.8, 1.2)))  # Slight brightness shift
+        augmented_images.append(sharpness.enhance(random.uniform(0.8, 1.5)))  # Slight sharpening
+
+        # Gamma Correction
+        gamma = random.uniform(0.8, 1.2)
+        gamma_adjusted = ImageOps.autocontrast(image.point(lambda p: ((p / 255.0) ** gamma) * 255))
+        augmented_images.append(gamma_adjusted)
+
+        # Slight Rotation (±5°)
+        augmented_images.append(image.rotate(random.uniform(-5, 5), resample=Image.Resampling.BICUBIC))
+
+        # Slight Noise Injection (simulated by adding small random pixel shifts)
+        noisy_image = image.convert("L")  # Convert to grayscale for subtle noise
+        pixels = noisy_image.load()
+        for _ in range(random.randint(500, 1500)):  # Number of pixels to modify
+            x, y = random.randint(0, image.width - 1), random.randint(0, image.height - 1)
+            pixels[x, y] = min(255, max(0, pixels[x, y] + random.randint(-10, 10)))  # Shift pixel intensity slightly
+        augmented_images.append(noisy_image.convert("RGB"))  # Convert back to RGB
+
+        return augmented_images
+
+    def run_inference(image, model, is_left_camera, confidence_threshold,
+                      reference_width, target_height=1024):
+        """
+        Run inference on an in-memory image using the YOLO model after 
+        resizing it to a target height while preserving aspect ratio.
+
+        Logs inference details to a CSV file.
+
         Parameters:
             image (PIL Image): In-memory image loaded from Azure.
             model (YOLO): YOLO model instance.
             confidence_threshold (float): Minimum confidence to consider a detection.
             target_height (int): Target height for resizing the image.
-        
+            is_left_camera (bool): Whether the image was taken from an L# camera (requires flipping).
+
         Returns:
             list: List of detections, each containing x, width, confidence.
         """
-        # Resize image while maintaining aspect ratio
-        width, height = image.size
-        scale_factor = target_height / height
-        target_width = int(width * scale_factor)
-        image = image.resize((target_width, target_height), Image.ANTIALIAS)
         
-        results = model(image)  # Pass the resized PIL image to the YOLO model
-        detections = []
+        # Ensure log file has headers if it doesn't exist
+        if not os.path.exists(LOG_FILE):
+            with open(LOG_FILE, mode="w", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerow([
+                    "Original Width", "Original Height", "Resized Width", "Resized Height",
+                    "Flipped", "Augmentation Index", "Detection X", "Detection Width",
+                    "Detection Confidence", "Accepted"
+                ])
+                
+        original_width, original_height = image.size
+        width_scale_factor = reference_width / original_width
 
-        for det in results.xyxy[0].cpu().numpy():  # Adjust based on your YOLO model's output format
-            x = int((det[0] + det[2]) / 2)  # Center x-coordinate
-            width = int(det[2] - det[0])
-            confidence = float(det[4])
-            if confidence >= confidence_threshold:
-                detections.append({'x': x, 'width': width, 'confidence': confidence})
+        # Flip image horizontally if it's from an L# camera
+        flipped = is_left_camera
+        if is_left_camera:
+            image = image.transpose(Image.FLIP_LEFT_RIGHT)
 
-        return detections
+        # Resize image while maintaining aspect ratio
+        scale_factor = target_height / original_height
+        target_width = int(original_width * scale_factor)
+        resized_width, resized_height = target_width, target_height
+        if scale_factor != 1.0:
+            image = image.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
 
-    def crop_and_normalize(image, detection, target_width=2200, target_height=1024):
+        logging.info(f"Preprocessed Image - Original: ({original_width}, {original_height}), "
+                    f"Resized: ({resized_width}, {resized_height}), Flipped: {flipped}")
+
+        augmented_images = augment_image(image)  # Augment the image for better detection
+        all_detections = []
+
+        for aug_index, aug_image in enumerate(augmented_images):
+            results = model(aug_image)
+            results = results if isinstance(results, list) else [results]
+
+            for result in results:
+                if result.boxes:
+                    for det in result.boxes.data.cpu().numpy():
+                        x_min, y_min, x_max, y_max, confidence, class_id = det
+                        x = int((x_min + x_max) / 2 * width_scale_factor)  # Adjust x to reference width
+                        width = int((x_max - x_min) * width_scale_factor)  # Adjust width to reference width
+                        confidence = float(confidence)
+                        accepted = confidence >= confidence_threshold
+
+                        # Log detection info
+                        with open(LOG_FILE, mode="a", newline="") as file:
+                            writer = csv.writer(file)
+                            writer.writerow([
+                                original_width, original_height, resized_width, resized_height,
+                                flipped, x, width, confidence, accepted
+                            ])
+
+                        if accepted:
+                            all_detections.append({'x': x, 'width': width, 'confidence': confidence})
+                else:
+                    logging.info(f"No detections in augmentation {aug_index}.")
+
+        logging.info(f"Final Detections: {len(all_detections)} accepted after confidence filtering.")
+        
+        return all_detections
+
+    def crop_and_normalize(image_blob, detection, target_width=2200, target_height=1024):
         """
         Crop a 2200x1024 region around the detection center while ensuring the crop stays within image boundaries.
         Resizes the crop if necessary to ensure uniform size.
@@ -185,8 +324,12 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         Returns:
             PIL Image: Cropped and resized image.
         """
+        # Convert bytes to a PIL image
+        image = Image.open(io.BytesIO(image_blob))
+
+        # Now get the size
         img_width, img_height = image.size
-        center_x = detection['x']
+        center_x = detection
 
         # Calculate crop box coordinates
         left = max(0, center_x - target_width // 2)
@@ -203,50 +346,75 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         cropped_image = image.crop(crop_box)
 
         # Ensure the cropped image is always target_width x target_height
-        cropped_image = cropped_image.resize((target_width, target_height), Image.ANTIALIAS)
+        cropped_image = cropped_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
 
-        return cropped_image     
+        return cropped_image
+
+    def group_detections(detections, proximity_threshold):
+        """
+        Group detections into regions based on their x-coordinate proximity.
+        
+        Parameters:
+            detections (list): List of detection dictionaries, each containing 'x' (center x-coordinate).
+            proximity_threshold (int): Maximum pixel distance to consider detections part of the same region.
+        
+        Returns:
+            list of lists: Each inner list contains detections that are part of the same region.
+        """
+        grouped_regions = []
+        current_region = []
+
+        for i, det in enumerate(detections):
+            if not current_region:
+                current_region.append(det)
+            else:
+                last_det = current_region[-1]
+                if abs(det['x'] - last_det['x']) <= proximity_threshold:
+                    current_region.append(det)
+                else:
+                    grouped_regions.append(current_region)
+                    current_region = [det]
+
+        if current_region:
+            grouped_regions.append(current_region)
+
+        return grouped_regions
     
     # Function to create TrainPass objects from car_grouped_symbols
     def create_train_pass_objects(car_grouped_symbols):
         train_pass_objects = []
 
-        for corridor, corridor_groups in car_grouped_symbols.items():
-            for train_symbol, symbol_groups in corridor_groups:
-                sorted_symbol_groups = sorted(symbol_groups, key=lambda x:
-                                              x[1][0][3])
-                corridor_symbol_pass = TrainPass()
-                corridor_symbol_pass.pass_data["Train Symbol"] = train_symbol
-                train_detail = sorted_symbol_groups[0][1][0]
-                corridor_symbol_pass.pass_data["Train Arrival Date/Time"] = \
-                    train_detail[3]
-                corridor_symbol_pass.pass_data["Train Destination"] = (
-                    f"{train_detail[11]} - {train_detail[12]}"
-                )
-                corridor_symbol_pass.pass_data["Destination Corridor"] = \
-                    train_detail[14]
-                corridor_symbol_pass.pass_data["Train Sequence Number"] = \
-                    train_detail[5]
-                (
-                    corridor_symbol_pass.pass_data["Detector Site"],
-                    corridor_symbol_pass.pass_data["Track Number"],
-                ) = transform_site_string(train_detail[6])
-                corridor_symbol_pass.pass_data["Mile Post"] = "681.1"
+        for corridor, corridor_groups in car_grouped_symbols.items():  # Iterate over corridors
+            for train_symbol, cars in corridor_groups.items():  # Correctly unpack train_symbols as dict keys
+                for car, car_detail in cars.items():  # Correctly unpack cars as dict keys
+                    corridor_symbol_pass = TrainPass()
+                    corridor_symbol_pass.pass_data["Train Symbol"] = train_symbol
+                    train_detail = car_detail[0]
+                    corridor_symbol_pass.pass_data["Train Arrival Date/Time"] = train_detail[3]
+                    corridor_symbol_pass.pass_data["Train Destination"] = f"{train_detail[11]} - {train_detail[12]}"
+                    corridor_symbol_pass.pass_data["Destination Corridor"] = train_detail[14]
+                    corridor_symbol_pass.pass_data["Train Sequence Number"] = train_detail[5]
 
-                for car_id, cars in symbol_groups:
-                    for car in cars:
-                        car_detection = Detection()
-                        car_detection.create_detection(
-                            car[9],
-                            f"{car[0]}-{car[1]}",
-                            car[7],
-                            car[13],
-                        )
-                        corridor_symbol_pass.add_detection(car_detection)
+                    (
+                        corridor_symbol_pass.pass_data["Detector Site"],
+                        corridor_symbol_pass.pass_data["Track Number"],
+                    ) = transform_site_string(train_detail[6])
+                    corridor_symbol_pass.pass_data["Mile Post"] = "681.1"
 
-                train_pass_objects.append(corridor_symbol_pass)
+                    # Process detections
+                    car_detection = Detection()
+                    car_detection.create_detection(
+                        car_detail[0][9],
+                        f"{car_detail[0][0]}-{car_detail[0][1]}",
+                        car_detail[0][7],
+                        car_detail[0][13],
+                        car_detail[0][15],
+                    )
+                    corridor_symbol_pass.add_detection(car_detection)
 
-            # Group the TrainPass objects by "Destination Corridor"
+                    train_pass_objects.append(corridor_symbol_pass)
+
+        # Group the TrainPass objects by "Destination Corridor"
         grouped_by_corridor = {}
         for train_pass in train_pass_objects:
             destination_corridor = train_pass.pass_data["Destination Corridor"]
@@ -254,8 +422,8 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 grouped_by_corridor[destination_corridor] = []
             grouped_by_corridor[destination_corridor].append(train_pass)
 
-        return grouped_by_corridor
-
+        return grouped_by_corridor  # Return the properly structured grouped pass objects
+    
     def transform_site_string(input_str):
         # Add a space before every capital letter except the first one
         spaced_str = re.sub(r"(?<!^)(?=[A-Z])", " ", input_str)
@@ -304,19 +472,19 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         for car_detection in car_list:
             dest_state = car_detection[12]
             if dest_state in northeast_corridor:
-                car_detection.append("Northeast Corridor")
+                car_detection.append("the Northeast Corridor")
             elif dest_state in southeast_corridor:
-                car_detection.append("Southeast Corridor")
+                car_detection.append("the Southeast Corridor")
             elif dest_state in southwest_corridor:
-                car_detection.append("Southwest Corridor")
+                car_detection.append("the Southwest Corridor")
             elif dest_state in northwest_corridor:
-                car_detection.append("Northwest Corridor")
+                car_detection.append("the Northwest Corridor")
             elif dest_state in ga:
                 car_detection.append("GA")
             elif dest_state in ny:
                 car_detection.append("NY")
             else:
-                car_detection.append("Unknown Corridor")
+                car_detection.append("an Unknown Corridor")
 
             # Sort the car_list by the last index (corridor)
         sorted_car_list = sorted(car_list, key=lambda x: x[-1])
@@ -362,19 +530,15 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 grouped_cars = [(key, list(group)) for key, group in
                                 combined_grouped]
 
-                # Keep only one car_id chosen by the top camera_id (index 8)
-                filtered_grouped_cars = []
-                for key, group in grouped_cars:
-                    top_car = max(group, key=lambda x: x[8])
-                    filtered_grouped_cars.append((key, [top_car]))
-
-                car_grouped_data.append((train_symbol, filtered_grouped_cars))
+                car_grouped_data.append((train_symbol, grouped_cars))
             car_grouped_symbols[corridor] = car_grouped_data
 
         return car_grouped_symbols
 
     def execute_notebook(databricks_instance, token, notebook_path, car_id,
                          car_number):
+        print(f'Executing notebook: {notebook_path} with car_id: {car_id}-{car_number}')
+        
         # API endpoint for running a notebook
         url = f"{databricks_instance}/api/2.0/jobs/runs/submit"
 
@@ -513,13 +677,13 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         client.set_secret(secret_name, new_secret_value)
 
     def create_mail_attachment(html_body, subject, corridor):
-        if corridor == "Northeast Corridor":
+        if corridor == "the Northeast Corridor":
             distribution_list = os.environ.get("NE_CORRIDOR")
-        elif corridor == "Southeast Corridor":
+        elif corridor == "the Southeast Corridor":
             distribution_list = os.environ.get("SE_CORRIDOR")
-        elif corridor == "Southwest Corridor":
+        elif corridor == "the Southwest Corridor":
             distribution_list = os.environ.get("SW_CORRIDOR")
-        elif corridor == "Northwest Corridor":
+        elif corridor == "the Northwest Corridor":
             distribution_list = os.environ.get("NW_CORRIDOR")
         elif corridor == "GA":
             distribution_list = os.environ.get("GA_TRAINS")
@@ -553,15 +717,9 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         for corridor, train_passes in processed_pass_data.items():
             if len(train_passes) < 2:
-                attachment_body = f"Hello,<br><br>Please see the below open \
-                    door(s) identified by RoboRailCop. This train is destined \
-                        for the {corridor} with # open container(s).\
-                            <br><br>Thank you,<br>RoboRailCop Team<br><br>"
+                attachment_body = f"Hello,<br><br>Please see the below open door(s) identified by RoboRailCop. This train is destined for {corridor} with # open container(s).<br><br>Thank you,<br>RoboRailCop Team<br><br>"
             else:
-                attachment_body = f"Hello,<br><br>Please see the below open \
-                    door(s) identified by RoboRailCop. These trains are \
-                        destined for the {corridor} with # open container(s).\
-                            <br><br>Thank you,<br>RoboRailCop Team<br><br>"
+                attachment_body = f"Hello,<br><br>Please see the below open door(s) identified by RoboRailCop. These trains are destined for {corridor} with # open container(s).<br><br>Thank you,<br>RoboRailCop Team<br><br>"
 
             train_symbols = []
 
@@ -611,6 +769,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                                 "Central"
                             ),
                             "Detection Car ID": detection_car_id,
+                            "Open Doors": len(train_pass.pass_detections[0]['crops']['crops']),
                         }
                     )
 
@@ -637,8 +796,24 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                     attachment_body += detections_df.to_html(header=False)
                     attachment_body += "<br>"
 
+                    # Process crops (embed in the email)
+                    if "crops" in detection and "crops" in detection["crops"] and detection["crops"]["crops"]:
+                        for idx, crop_image in enumerate(detection["crops"]["crops"]):  # Already a PIL Image
+                            try:
+                                crop_buffer = io.BytesIO()
+                                crop_image.save(crop_buffer, format="JPEG")  # Save as JPEG
+                                crop_bytes = crop_buffer.getvalue()  # Extract raw bytes
+                                crop_encoded = base64.b64encode(crop_bytes).decode()  # Encode to Base64
+
+                                # Embed the crop image
+                                attachment_body += f'<img src="data:image/jpeg;base64,{crop_encoded}" width="2200"> '
+                                attachment_body += "<br><br>"
+
+                            except IOError:
+                                raise ValueError("Invalid crop image data")
+
                     # Process image
-                    image_data = detection["image"]
+                    image_data = detection["car_image"]
 
                     # Ensure image_data is not None and is of type bytes
                     if not isinstance(image_data, bytes):
@@ -687,10 +862,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 + attachment_body
             )
 
-            subject = "RoboRailCop: Open Intermodal Container/Trailer \
-                Door Detected: " + (
-                ", ".join(train_symbols)
-            )
+            subject = "RoboRailCop: Open Intermodal Container/Trailer Door Detected: " + (", ".join(train_symbols))
 
             attachments.append(create_mail_attachment(attachment_body,
                                                       subject, corridor))
@@ -755,8 +927,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         msg = MIMEMultipart("related")
         msg["From"] = group_mailbox
         msg["To"] = ", ".join(to_addresses)
-        msg["Subject"] = f"{subj_prefix}: Open Intermodal Container/Trailer \
-            Door Detected"
+        msg["Subject"] = f"{subj_prefix}: Open Intermodal Container/Trailer Door Detected"
 
         # Create the HTML part
         html_part = MIMEText(body, "html")
@@ -829,117 +1000,125 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             return local_time.strftime("%Y-%m-%d %H:%M:%S")
 
     if myTimer.past_due:
-        logging.info('The timer is past due!')
+        logging.info("The timer is past due!")
 
     procd_train_data = {}
 
-    # Set up logging to Azure or merging Application Insights
-    print('logger starting...')
+    # Set up logging
+    print("Logger starting...")
     logger = logging.getLogger(__name__)
-    logger.addHandler(
-        AzureLogHandler(
-            connection_string=os.environ.
-            get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if not LOCAL_RUN:
+        from opencensus.ext.azure.log_exporter import AzureLogHandler
+        logger.addHandler(
+            AzureLogHandler(
+                connection_string=os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+            )
         )
-    )
 
-    blob_service_client = get_blob_service_client()
-    container_name = os.environ.get("CONT_NAME")
-    container_client = blob_service_client. \
-        get_container_client(container_name)
-    print('container retrieved ...')
+    print("Logger initialized...")
 
-    # Get recent blobs modified within the last 15 minutes and 10 seconds
-    recent_passes = get_recent_passes(
-        container_client, seconds=int(os.environ.get("SECONDS_TO_LK_BACK"))
-    )
-    print('pass data collected . . . ')
+    # Retrieve train pass data (Either from Azure or Local Files)
+    if not LOCAL_RUN:
+        blob_service_client = get_blob_service_client()
+        container_name = os.environ.get("CONT_NAME")
+        container_client = blob_service_client.get_container_client(container_name)
+        print("Container retrieved ...")
 
-    tracking_dict = load_tracking_dict()
+        recent_passes = get_recent_passes(
+            container_client, seconds=int(os.environ.get("SECONDS_TO_LK_BACK"))
+        )
+        print("Pass data collected ...")
 
+        tracking_dict = load_tracking_dict()
+    else:
+        # Get local images
+        recent_passes = [
+            os.path.join(LOCAL_PASS_DIR, file) for file in os.listdir(LOCAL_PASS_DIR)
+        ]
+        print(f"Local mode enabled. Found {len(recent_passes)} local passes.")
+
+    # Process Images
     if recent_passes:
-        pass_files = download_passes(container_client, recent_passes)
+        if LOCAL_RUN:
+            # Read local images and use last modified timestamp as upload time
+            pass_files = [
+                (
+                    open(file, "rb").read(),  # Image in bytes
+                    os.path.basename(file),  # File name
+                    datetime.utcfromtimestamp(os.path.getmtime(file)).replace(tzinfo=pytz.UTC),  # Creation time
+                )
+                for file in recent_passes
+            ]
+        else:
+            pass_files = download_passes(container_client, recent_passes)
 
         if pass_files:
-
             car_list = []
+            processed_symbol_car_keys = set()
 
             for image, file_name, detection_upload_dt_time in pass_files:
+                if file_name.endswith('.jpg'):
+                    car_detail_list = re.split(r"[-_.]", file_name)
+                    car_detail_list[1] = car_detail_list[1].lstrip("0")
 
-                processed_symbol_car_keys = set()
+                    # Parse timestamp from filename
+                    date_str, time_str = car_detail_list[3], car_detail_list[4]
+                    combined_str = f"{date_str} {time_str}"
+                    naive_datetime = datetime.strptime(combined_str, "%Y%m%d %H%M%S")
+                    arrival_utc_datetime = pytz.utc.localize(naive_datetime)
+                    car_detail_list[3] = arrival_utc_datetime
+                    car_detail_list.pop(4)
+                    car_detail_list.append(detection_upload_dt_time)  # Use last modified time for local files
 
-                car_detail_list = re.split(r"[-_.]", file_name)
-                car_detail_list[1] = car_detail_list[1].lstrip("0")
+                    # Databricks lookup (Needed for LOCAL_RUN too)
+                    databricks_instance = os.environ.get("DATABRICKS_INSTANCE")
+                    databricks_token = os.environ.get("DATABRICKS_TOKEN")
+                    db_notebook_path = os.environ.get("DATABRICKS_NOTEBOOK_PTH")
 
-                # Combine indices 3 (UTC date string) and 4 (UTC time
-                # string) to create a timezone-aware datetime object in UTC
-                date_str = car_detail_list[3]  # 'YYYYMMDD'
-                time_str = car_detail_list[4]  # 'HHMMSS'
-                combined_str = f"{date_str} {time_str}"
-                naive_datetime = datetime.strptime(combined_str,
-                                                    "%Y%m%d %H%M%S")
-                arrival_utc_datetime = pytz.utc.localize(naive_datetime)
-                car_detail_list[3] = arrival_utc_datetime
-                car_detail_list.pop(4)
-                car_detail_list.append(detection_upload_dt_time)
+                    car_inits, car_num = car_detail_list[0], car_detail_list[1]
+                    car_id = f"{car_inits}-{car_num}"
 
-                # TODO uncomment this before deployment to Azure or merging
-                databricks_instance = os.environ.get("DATABRICKS_INSTANCE")
-                databricks_token = os.environ.get("DATABRICKS_TOKEN")
-                db_notebook_path = os.environ.get("DATABRICKS_NOTEBOOK_PTH")
+                    if car_id in procd_train_data:
+                        train_data = procd_train_data[car_id]
+                    else:
+                        train_data = execute_notebook(
+                            databricks_instance, databricks_token, db_notebook_path, car_inits, car_num
+                        )
+                        procd_train_data[car_id] = train_data
 
-                car_inits = car_detail_list[0]
-                car_num = car_detail_list[1]
-                car_id = f"{car_inits}-{car_num}"
+                    try:
+                        train_data = train_data["notebook_output"]["result"].split("'")
+                        car_detail_list.extend([train_data[1], train_data[3], train_data[5], image])
+                        symbol_car_key = f"{train_data[1]}-{car_id}"
+                    except KeyError:
+                        car_detail_list.extend(["SymbolNotFound", "NA", "NA", image])
+                        symbol_car_key = f"SymbolNotFound-{car_id}"
 
-                if car_id in procd_train_data:
-                    train_data = procd_train_data[car_id]
-                else:
-                    train_data = execute_notebook(
-                        databricks_instance,
-                        databricks_token,
-                        db_notebook_path,
-                        car_inits,
-                        car_num,
-                    )
-                    procd_train_data[car_id] = train_data
+                    if not LOCAL_RUN:
+                        if symbol_car_key not in processed_symbol_car_keys:
+                            processed_symbol_car_keys.add(symbol_car_key)
 
-                try:
-                    train_data = train_data["notebook_output"]["result"] \
-                        .split("'")
-                    car_detail_list.append(train_data[1])
-                    car_detail_list.append(train_data[3])
-                    car_detail_list.append(train_data[5])
-                    car_detail_list.append(image)
-                    symbol_car_key = f"{train_data[1]}-{car_id}"
+                        if symbol_car_key in tracking_dict and tracking_dict[symbol_car_key]["executions_since_addition"] == 3:
+                            car_list.append(car_detail_list)
+                    else:
+                        car_list.append(car_detail_list)  # Always process in local runs
 
-                except KeyError:
-                    car_detail_list.append(train_data["metadata"]["job_id"])
-                    car_detail_list.append("NA")
-                    car_detail_list.append("NA")
-                    car_detail_list.append(image)
-                    symbol_car_key = f"SymbolNotFound-{car_id}"
+            if car_list:
+                corridor_grouped_cars = group_by_corridor(car_list)
+                corr_symbol_car_grps = group_by_train_symbol(corridor_grouped_cars)
+                car_grouped_symbols = group_by_car_id(corr_symbol_car_grps)
 
-                if symbol_car_key not in processed_symbol_car_keys:
-                    processed_symbol_car_keys.add(symbol_car_key)
+                model = YOLO(MODEL_PATH)
+                best_detection_dict = process_car_images(car_grouped_symbols, model, .4)
 
-                if symbol_car_key not in tracking_dict:
-                    car_list.append(car_detail_list)
+                processed_pass_data = create_train_pass_objects(best_detection_dict)
 
-            corridor_grouped_cars = group_by_corridor(car_list)
-            corr_symbol_car_grps = group_by_train_symbol(corridor_grouped_cars)
-            car_grouped_symbols = group_by_car_id(corr_symbol_car_grps)
+                if processed_pass_data:
+                    body, attachments = format_email_body(processed_pass_data, logger)
+                    send_email(body, logger, attachments)
 
-            processed_pass_data = create_train_pass_objects(car_grouped_symbols)
+                if not LOCAL_RUN:
+                    update_tracking_dict(tracking_dict, processed_symbol_car_keys)
+                    save_tracking_dict(tracking_dict)
 
-        if processed_pass_data:
-            body, attachments = format_email_body(processed_pass_data, logger)
-            send_email(body, logger, attachments)
-            update_tracking_dict(tracking_dict, processed_symbol_car_keys)
-            save_tracking_dict(tracking_dict)
-            
-        else:
-            update_tracking_dict(tracking_dict)
-            save_tracking_dict(tracking_dict)
-
-    logging.info('Python timer trigger function executed.')
+    logging.info("Python timer trigger function executed.")
