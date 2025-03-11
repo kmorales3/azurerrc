@@ -177,38 +177,6 @@
         "documentation": {}
     },
     {
-        "label": "datetime",
-        "importPath": "datetime",
-        "description": "datetime",
-        "isExtraImport": true,
-        "detail": "datetime",
-        "documentation": {}
-    },
-    {
-        "label": "timedelta",
-        "importPath": "datetime",
-        "description": "datetime",
-        "isExtraImport": true,
-        "detail": "datetime",
-        "documentation": {}
-    },
-    {
-        "label": "timezone",
-        "importPath": "datetime",
-        "description": "datetime",
-        "isExtraImport": true,
-        "detail": "datetime",
-        "documentation": {}
-    },
-    {
-        "label": "encoders",
-        "importPath": "email",
-        "description": "email",
-        "isExtraImport": true,
-        "detail": "email",
-        "documentation": {}
-    },
-    {
         "label": "encoders",
         "importPath": "email",
         "description": "email",
@@ -225,35 +193,11 @@
         "documentation": {}
     },
     {
-        "label": "MIMEBase",
-        "importPath": "email.mime.base",
-        "description": "email.mime.base",
-        "isExtraImport": true,
-        "detail": "email.mime.base",
-        "documentation": {}
-    },
-    {
         "label": "MIMEMultipart",
         "importPath": "email.mime.multipart",
         "description": "email.mime.multipart",
         "isExtraImport": true,
         "detail": "email.mime.multipart",
-        "documentation": {}
-    },
-    {
-        "label": "MIMEMultipart",
-        "importPath": "email.mime.multipart",
-        "description": "email.mime.multipart",
-        "isExtraImport": true,
-        "detail": "email.mime.multipart",
-        "documentation": {}
-    },
-    {
-        "label": "MIMEText",
-        "importPath": "email.mime.text",
-        "description": "email.mime.text",
-        "isExtraImport": true,
-        "detail": "email.mime.text",
         "documentation": {}
     },
     {
@@ -343,22 +287,6 @@
         "documentation": {}
     },
     {
-        "label": "Image",
-        "importPath": "PIL",
-        "description": "PIL",
-        "isExtraImport": true,
-        "detail": "PIL",
-        "documentation": {}
-    },
-    {
-        "label": "DefaultAzureCredential",
-        "importPath": "azure.identity",
-        "description": "azure.identity",
-        "isExtraImport": true,
-        "detail": "azure.identity",
-        "documentation": {}
-    },
-    {
         "label": "DefaultAzureCredential",
         "importPath": "azure.identity",
         "description": "azure.identity",
@@ -372,22 +300,6 @@
         "description": "azure.storage.blob",
         "isExtraImport": true,
         "detail": "azure.storage.blob",
-        "documentation": {}
-    },
-    {
-        "label": "BlobServiceClient",
-        "importPath": "azure.storage.blob",
-        "description": "azure.storage.blob",
-        "isExtraImport": true,
-        "detail": "azure.storage.blob",
-        "documentation": {}
-    },
-    {
-        "label": "SecretClient",
-        "importPath": "azure.keyvault.secrets",
-        "description": "azure.keyvault.secrets",
-        "isExtraImport": true,
-        "detail": "azure.keyvault.secrets",
         "documentation": {}
     },
     {
@@ -430,6 +342,33 @@
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
         "peekOfCode": "class Tee:\n    def __init__(self, file):\n        self.f = file\n    def write(self, what):\n        if self.f is not None:\n            try:\n                self.f.write(what.replace(\"\\n\", \"\\r\\n\"))\n            except OSError:\n                pass\n        tee_f.write(what)",
+        "detail": ".venv.Scripts.pywin32_postinstall",
+        "documentation": {}
+    },
+    {
+        "label": "get_root_hkey",
+        "kind": 2,
+        "importPath": ".venv.Scripts.pywin32_postinstall",
+        "description": ".venv.Scripts.pywin32_postinstall",
+        "peekOfCode": "def get_root_hkey():\n    try:\n        winreg.OpenKey(\n            winreg.HKEY_LOCAL_MACHINE, root_key_name, 0, winreg.KEY_CREATE_SUB_KEY\n        )\n        return winreg.HKEY_LOCAL_MACHINE\n    except OSError:\n        # Either not exist, or no permissions to create subkey means\n        # must be HKCU\n        return winreg.HKEY_CURRENT_USER",
+        "detail": ".venv.Scripts.pywin32_postinstall",
+        "documentation": {}
+    },
+    {
+        "label": "create_shortcut",
+        "kind": 2,
+        "importPath": ".venv.Scripts.pywin32_postinstall",
+        "description": ".venv.Scripts.pywin32_postinstall",
+        "peekOfCode": "def create_shortcut(\n    path, description, filename, arguments=\"\", workdir=\"\", iconpath=\"\", iconindex=0\n):\n    import pythoncom\n    from win32com.shell import shell\n    ilink = pythoncom.CoCreateInstance(\n        shell.CLSID_ShellLink,\n        None,\n        pythoncom.CLSCTX_INPROC_SERVER,\n        shell.IID_IShellLink,",
+        "detail": ".venv.Scripts.pywin32_postinstall",
+        "documentation": {}
+    },
+    {
+        "label": "get_special_folder_path",
+        "kind": 2,
+        "importPath": ".venv.Scripts.pywin32_postinstall",
+        "description": ".venv.Scripts.pywin32_postinstall",
+        "peekOfCode": "def get_special_folder_path(path_name):\n    from win32com.shell import shell, shellcon\n    for maybe in \"\"\"\n        CSIDL_COMMON_STARTMENU CSIDL_STARTMENU CSIDL_COMMON_APPDATA\n        CSIDL_LOCAL_APPDATA CSIDL_APPDATA CSIDL_COMMON_DESKTOPDIRECTORY\n        CSIDL_DESKTOPDIRECTORY CSIDL_COMMON_STARTUP CSIDL_STARTUP\n        CSIDL_COMMON_PROGRAMS CSIDL_PROGRAMS CSIDL_PROGRAM_FILES_COMMON\n        CSIDL_PROGRAM_FILES CSIDL_FONTS\"\"\".split():\n        if maybe == path_name:\n            csidl = getattr(shellcon, maybe)",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -492,7 +431,7 @@
         "kind": 2,
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
-        "peekOfCode": "def RegisterPythonwin(register=True, lib_dir=None):\n    \"\"\"Add (or remove) Pythonwin to context menu for python scripts.\n    ??? Should probably also add Edit command for pys files also.\n    Also need to remove these keys on uninstall, but there's no function\n        like file_created to add registry entries to uninstall log ???\n    \"\"\"\n    import os\n    if lib_dir is None:\n        lib_dir = sysconfig.get_paths()[\"platlib\"]\n    classes_root = get_root_hkey()",
+        "peekOfCode": "def RegisterPythonwin(register=True, lib_dir=None):\n    \"\"\"Add (or remove) Pythonwin to context menu for python scripts.\n    ??? Should probably also add Edit command for pys files also.\n    Also need to remove these keys on uninstall, but there's no function\n    to add registry entries to uninstall log ???\n    \"\"\"\n    import os\n    if lib_dir is None:\n        lib_dir = sysconfig.get_paths()[\"platlib\"]\n    classes_root = get_root_hkey()",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -546,7 +485,7 @@
         "kind": 2,
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
-        "peekOfCode": "def verify_destination(location):\n    if not os.path.isdir(location):\n        raise argparse.ArgumentTypeError(f'Path \"{location}\" does not exist!')\n    return location\ndef main():\n    parser = argparse.ArgumentParser(\n        formatter_class=argparse.RawDescriptionHelpFormatter,\n        description=\"\"\"A post-install script for the pywin32 extensions.\n    * Typical usage:\n    > python pywin32_postinstall.py -install",
+        "peekOfCode": "def verify_destination(location: str) -> str:\n    location = os.path.abspath(location)\n    if not os.path.isdir(location):\n        raise argparse.ArgumentTypeError(\n            f'Path \"{location}\" is not an existing directory!'\n        )\n    return location\ndef main():\n    parser = argparse.ArgumentParser(\n        formatter_class=argparse.RawDescriptionHelpFormatter,",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -555,7 +494,7 @@
         "kind": 2,
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
-        "peekOfCode": "def main():\n    parser = argparse.ArgumentParser(\n        formatter_class=argparse.RawDescriptionHelpFormatter,\n        description=\"\"\"A post-install script for the pywin32 extensions.\n    * Typical usage:\n    > python pywin32_postinstall.py -install\n    If you installed pywin32 via a .exe installer, this should be run\n    automatically after installation, but if it fails you can run it again.\n    If you installed pywin32 via PIP, you almost certainly need to run this to\n    setup the environment correctly.",
+        "peekOfCode": "def main():\n    parser = argparse.ArgumentParser(\n        formatter_class=argparse.RawDescriptionHelpFormatter,\n        description=\"\"\"A post-install script for the pywin32 extensions.\n    * Typical usage:\n    > python -m pywin32_postinstall -install\n    * or (shorter but you don't have control over which python environment is used)\n    > pywin32_postinstall -install\n    You need to execute this script, with a '-install' parameter,\n    to ensure the environment is setup correctly to install COM objects, services, etc.",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -564,7 +503,7 @@
         "kind": 5,
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
-        "peekOfCode": "tee_f = open(os.path.join(tempfile.gettempdir(), \"pywin32_postinstall.log\"), \"w\")\nclass Tee:\n    def __init__(self, file):\n        self.f = file\n    def write(self, what):\n        if self.f is not None:\n            try:\n                self.f.write(what.replace(\"\\n\", \"\\r\\n\"))\n            except OSError:\n                pass",
+        "peekOfCode": "tee_f = open(\n    os.path.join(\n        tempfile.gettempdir(),  # Send output somewhere so it can be found if necessary...\n        \"pywin32_postinstall.log\",\n    ),\n    \"w\",\n)\nclass Tee:\n    def __init__(self, file):\n        self.f = file",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -600,7 +539,7 @@
         "kind": 5,
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
-        "peekOfCode": "silent = 0\n# Verbosity of output messages.\nverbose = 1\nroot_key_name = \"Software\\\\Python\\\\PythonCore\\\\\" + sys.winver\ntry:\n    # When this script is run from inside the bdist_wininst installer,\n    # file_created() and directory_created() are additional builtin\n    # functions which write lines to PythonXX\\pywin32-install.log. This is\n    # a list of actions for the uninstaller, the format is inspired by what\n    # the Wise installer also creates.",
+        "peekOfCode": "silent = 0\n# Verbosity of output messages.\nverbose = 1\nroot_key_name = \"Software\\\\Python\\\\PythonCore\\\\\" + sys.winver\ndef get_root_hkey():\n    try:\n        winreg.OpenKey(\n            winreg.HKEY_LOCAL_MACHINE, root_key_name, 0, winreg.KEY_CREATE_SUB_KEY\n        )\n        return winreg.HKEY_LOCAL_MACHINE",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -609,7 +548,7 @@
         "kind": 5,
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
-        "peekOfCode": "verbose = 1\nroot_key_name = \"Software\\\\Python\\\\PythonCore\\\\\" + sys.winver\ntry:\n    # When this script is run from inside the bdist_wininst installer,\n    # file_created() and directory_created() are additional builtin\n    # functions which write lines to PythonXX\\pywin32-install.log. This is\n    # a list of actions for the uninstaller, the format is inspired by what\n    # the Wise installer also creates.\n    file_created  # type: ignore[used-before-def]\n    # 3.10 stopped supporting bdist_wininst, but we can still build them with 3.9.",
+        "peekOfCode": "verbose = 1\nroot_key_name = \"Software\\\\Python\\\\PythonCore\\\\\" + sys.winver\ndef get_root_hkey():\n    try:\n        winreg.OpenKey(\n            winreg.HKEY_LOCAL_MACHINE, root_key_name, 0, winreg.KEY_CREATE_SUB_KEY\n        )\n        return winreg.HKEY_LOCAL_MACHINE\n    except OSError:\n        # Either not exist, or no permissions to create subkey means",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -618,7 +557,7 @@
         "kind": 5,
         "importPath": ".venv.Scripts.pywin32_postinstall",
         "description": ".venv.Scripts.pywin32_postinstall",
-        "peekOfCode": "root_key_name = \"Software\\\\Python\\\\PythonCore\\\\\" + sys.winver\ntry:\n    # When this script is run from inside the bdist_wininst installer,\n    # file_created() and directory_created() are additional builtin\n    # functions which write lines to PythonXX\\pywin32-install.log. This is\n    # a list of actions for the uninstaller, the format is inspired by what\n    # the Wise installer also creates.\n    file_created  # type: ignore[used-before-def]\n    # 3.10 stopped supporting bdist_wininst, but we can still build them with 3.9.\n    # This can be kept until Python 3.9 or exe installers support is dropped.",
+        "peekOfCode": "root_key_name = \"Software\\\\Python\\\\PythonCore\\\\\" + sys.winver\ndef get_root_hkey():\n    try:\n        winreg.OpenKey(\n            winreg.HKEY_LOCAL_MACHINE, root_key_name, 0, winreg.KEY_CREATE_SUB_KEY\n        )\n        return winreg.HKEY_LOCAL_MACHINE\n    except OSError:\n        # Either not exist, or no permissions to create subkey means\n        # must be HKCU",
         "detail": ".venv.Scripts.pywin32_postinstall",
         "documentation": {}
     },
@@ -645,16 +584,16 @@
         "kind": 2,
         "importPath": ".venv.Scripts.pywin32_testall",
         "description": ".venv.Scripts.pywin32_testall",
-        "peekOfCode": "def main():\n    import argparse\n    code_directories = [this_dir] + site_packages\n    parser = argparse.ArgumentParser(\n        description=\"A script to trigger tests in all subprojects of PyWin32.\"\n    )\n    parser.add_argument(\n        \"-no-user-interaction\",\n        default=False,\n        action=\"store_true\",",
+        "peekOfCode": "def main():\n    import argparse\n    code_directories = [project_root] + site_packages\n    parser = argparse.ArgumentParser(\n        description=\"A script to trigger tests in all subprojects of PyWin32.\"\n    )\n    parser.add_argument(\n        \"-no-user-interaction\",\n        default=False,\n        action=\"store_true\",",
         "detail": ".venv.Scripts.pywin32_testall",
         "documentation": {}
     },
     {
-        "label": "this_dir",
+        "label": "project_root",
         "kind": 5,
         "importPath": ".venv.Scripts.pywin32_testall",
         "description": ".venv.Scripts.pywin32_testall",
-        "peekOfCode": "this_dir = os.path.dirname(__file__)\nsite_packages = [\n    site.getusersitepackages(),\n] + site.getsitepackages()\nfailures = []\n# Run a test using subprocess and wait for the result.\n# If we get an returncode != 0, we know that there was an error, but we don't\n# abort immediately - we run as many tests as we can.\ndef run_test(script, cmdline_extras):\n    dirname, scriptname = os.path.split(script)",
+        "peekOfCode": "project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))\nsite_packages = [site.getusersitepackages()] + site.getsitepackages()\nfailures = []\n# Run a test using subprocess and wait for the result.\n# If we get an returncode != 0, we know that there was an error, but we don't\n# abort immediately - we run as many tests as we can.\ndef run_test(script, cmdline_extras):\n    dirname, scriptname = os.path.split(script)\n    # some tests prefer to be run from their directory.\n    cmd = [sys.executable, \"-u\", scriptname] + cmdline_extras",
         "detail": ".venv.Scripts.pywin32_testall",
         "documentation": {}
     },
@@ -663,7 +602,7 @@
         "kind": 5,
         "importPath": ".venv.Scripts.pywin32_testall",
         "description": ".venv.Scripts.pywin32_testall",
-        "peekOfCode": "site_packages = [\n    site.getusersitepackages(),\n] + site.getsitepackages()\nfailures = []\n# Run a test using subprocess and wait for the result.\n# If we get an returncode != 0, we know that there was an error, but we don't\n# abort immediately - we run as many tests as we can.\ndef run_test(script, cmdline_extras):\n    dirname, scriptname = os.path.split(script)\n    # some tests prefer to be run from their directory.",
+        "peekOfCode": "site_packages = [site.getusersitepackages()] + site.getsitepackages()\nfailures = []\n# Run a test using subprocess and wait for the result.\n# If we get an returncode != 0, we know that there was an error, but we don't\n# abort immediately - we run as many tests as we can.\ndef run_test(script, cmdline_extras):\n    dirname, scriptname = os.path.split(script)\n    # some tests prefer to be run from their directory.\n    cmd = [sys.executable, \"-u\", scriptname] + cmdline_extras\n    print(\"--- Running '%s' ---\" % script)",
         "detail": ".venv.Scripts.pywin32_testall",
         "documentation": {}
     },
@@ -681,7 +620,7 @@
         "kind": 2,
         "importPath": "function_app",
         "description": "function_app",
-        "peekOfCode": "def rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:\n        def __init__(self):\n            self.detection_data = {\n                \"Created at\": \"\",\n                \"Car ID\": \"\",\n                \"Intermodal Container ID\": \"\",\n                \"Camera ID\": \"\",\n            }\n            self.image = None",
+        "peekOfCode": "def rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:\n        def __init__(self):\n            self.detection_data = {\n                \"Created at\": \"\",\n                \"Car ID\": \"\",\n                \"Intermodal Container ID\": \"\",\n                \"Camera ID\": \"\",\n            }\n            self.car_image = None",
         "detail": "function_app",
         "documentation": {}
     },
@@ -699,7 +638,7 @@
         "kind": 5,
         "importPath": "function_app",
         "description": "function_app",
-        "peekOfCode": "MAX_EMAIL_SIZE = 20 * 1024 * 1024  # 20MB\nCENTRAL_TZ = pytz.timezone(\"US/Central\")\nMOUNTAIN_TZ = pytz.timezone(\"US/Mountain\")\nUTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",",
+        "peekOfCode": "MAX_EMAIL_SIZE = 20 * 1024 * 1024  # 20MB\nCENTRAL_TZ = pytz.timezone(\"US/Central\")\nMOUNTAIN_TZ = pytz.timezone(\"US/Mountain\")\nUTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\nMODEL_PATH = r\"C:\\Users\\c883206\\OneDrive - BNSF Railway\\RoboRailCop\\cnn_model_dev\\final_trainings\\v3.2.1_full_send\\weights\\last.pt\"",
         "detail": "function_app",
         "documentation": {}
     },
@@ -708,7 +647,7 @@
         "kind": 5,
         "importPath": "function_app",
         "description": "function_app",
-        "peekOfCode": "CENTRAL_TZ = pytz.timezone(\"US/Central\")\nMOUNTAIN_TZ = pytz.timezone(\"US/Mountain\")\nUTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)",
+        "peekOfCode": "CENTRAL_TZ = pytz.timezone(\"US/Central\")\nMOUNTAIN_TZ = pytz.timezone(\"US/Mountain\")\nUTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\nMODEL_PATH = r\"C:\\Users\\c883206\\OneDrive - BNSF Railway\\RoboRailCop\\cnn_model_dev\\final_trainings\\v3.2.1_full_send\\weights\\last.pt\"\nLOCAL_RUN = True",
         "detail": "function_app",
         "documentation": {}
     },
@@ -717,7 +656,7 @@
         "kind": 5,
         "importPath": "function_app",
         "description": "function_app",
-        "peekOfCode": "MOUNTAIN_TZ = pytz.timezone(\"US/Mountain\")\nUTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)\ndef rrc_trigger(myTimer: func.TimerRequest) -> None:",
+        "peekOfCode": "MOUNTAIN_TZ = pytz.timezone(\"US/Mountain\")\nUTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\nMODEL_PATH = r\"C:\\Users\\c883206\\OneDrive - BNSF Railway\\RoboRailCop\\cnn_model_dev\\final_trainings\\v3.2.1_full_send\\weights\\last.pt\"\nLOCAL_RUN = True\nLOCAL_PASS_DIR = r\"C:\\Users\\c883206\\Downloads\\ga_emails\"",
         "detail": "function_app",
         "documentation": {}
     },
@@ -726,7 +665,7 @@
         "kind": 5,
         "importPath": "function_app",
         "description": "function_app",
-        "peekOfCode": "UTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)\ndef rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:",
+        "peekOfCode": "UTC_TZ = pytz.utc\nTIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\nMODEL_PATH = r\"C:\\Users\\c883206\\OneDrive - BNSF Railway\\RoboRailCop\\cnn_model_dev\\final_trainings\\v3.2.1_full_send\\weights\\last.pt\"\nLOCAL_RUN = True\nLOCAL_PASS_DIR = r\"C:\\Users\\c883206\\Downloads\\ga_emails\"\nLOG_FILE = \"inference_log.csv\"",
         "detail": "function_app",
         "documentation": {}
     },
@@ -735,7 +674,43 @@
         "kind": 5,
         "importPath": "function_app",
         "description": "function_app",
-        "peekOfCode": "TIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)\ndef rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:\n        def __init__(self):",
+        "peekOfCode": "TIMEZONES = {\n    \"Mountain\": MOUNTAIN_TZ,\n    \"Central\": CENTRAL_TZ,\n    \"UTC\": UTC_TZ,\n}\nMODEL_PATH = r\"C:\\Users\\c883206\\OneDrive - BNSF Railway\\RoboRailCop\\cnn_model_dev\\final_trainings\\v3.2.1_full_send\\weights\\last.pt\"\nLOCAL_RUN = True\nLOCAL_PASS_DIR = r\"C:\\Users\\c883206\\Downloads\\ga_emails\"\nLOG_FILE = \"inference_log.csv\"\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",",
+        "detail": "function_app",
+        "documentation": {}
+    },
+    {
+        "label": "MODEL_PATH",
+        "kind": 5,
+        "importPath": "function_app",
+        "description": "function_app",
+        "peekOfCode": "MODEL_PATH = r\"C:\\Users\\c883206\\OneDrive - BNSF Railway\\RoboRailCop\\cnn_model_dev\\final_trainings\\v3.2.1_full_send\\weights\\last.pt\"\nLOCAL_RUN = True\nLOCAL_PASS_DIR = r\"C:\\Users\\c883206\\Downloads\\ga_emails\"\nLOG_FILE = \"inference_log.csv\"\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)\ndef rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:\n        def __init__(self):\n            self.detection_data = {",
+        "detail": "function_app",
+        "documentation": {}
+    },
+    {
+        "label": "LOCAL_RUN",
+        "kind": 5,
+        "importPath": "function_app",
+        "description": "function_app",
+        "peekOfCode": "LOCAL_RUN = True\nLOCAL_PASS_DIR = r\"C:\\Users\\c883206\\Downloads\\ga_emails\"\nLOG_FILE = \"inference_log.csv\"\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)\ndef rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:\n        def __init__(self):\n            self.detection_data = {\n                \"Created at\": \"\",",
+        "detail": "function_app",
+        "documentation": {}
+    },
+    {
+        "label": "LOCAL_PASS_DIR",
+        "kind": 5,
+        "importPath": "function_app",
+        "description": "function_app",
+        "peekOfCode": "LOCAL_PASS_DIR = r\"C:\\Users\\c883206\\Downloads\\ga_emails\"\nLOG_FILE = \"inference_log.csv\"\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)\ndef rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:\n        def __init__(self):\n            self.detection_data = {\n                \"Created at\": \"\",\n                \"Car ID\": \"\",",
+        "detail": "function_app",
+        "documentation": {}
+    },
+    {
+        "label": "LOG_FILE",
+        "kind": 5,
+        "importPath": "function_app",
+        "description": "function_app",
+        "peekOfCode": "LOG_FILE = \"inference_log.csv\"\n@app.timer_trigger(schedule=\"0 */1 * * * *\", arg_name=\"myTimer\",\n                   run_on_startup=False, use_monitor=False)\ndef rrc_trigger(myTimer: func.TimerRequest) -> None:\n    class Detection:\n        def __init__(self):\n            self.detection_data = {\n                \"Created at\": \"\",\n                \"Car ID\": \"\",\n                \"Intermodal Container ID\": \"\",",
         "detail": "function_app",
         "documentation": {}
     }
