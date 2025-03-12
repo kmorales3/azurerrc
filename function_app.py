@@ -45,7 +45,7 @@ TIMEZONES = {
 }
 MODEL_PATH = r"C:\Users\c883206\OneDrive - BNSF Railway\RoboRailCop\cnn_model_dev\final_trainings\v3.2.1_full_send\weights\last.pt"
 LOCAL_RUN = True
-LOCAL_PASS_DIR = r"C:\Users\c883206\Downloads\ga_emails"
+LOCAL_PASS_DIR = r"C:\Users\c883206\Downloads\031025_092400_email"
 LOG_FILE = "inference_log.csv"
 
 
@@ -96,7 +96,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         def add_detection(self, detection):
             self.pass_detections.append(detection.__dict__)
 
-    def process_car_images(grouped_cars, model, confidence_threshold, crop_size=(2200, 1024), proximity_threshold=1100):
+    def process_car_images(grouped_cars, model, confidence_threshold, crop_size=(1280, 768), proximity_threshold=3000):
         """
         Process car images, run inference on in-memory images (from Azure), group detections into regions,
         pare down car_details to the highest camera entry, and append crops to that entry.
@@ -311,7 +311,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         
         return all_detections
 
-    def crop_and_normalize(detection, target_width=2200, target_height=1024):
+    def crop_and_normalize(detection, target_width=1280, target_height=768):
         """
         Crop a 2200x1024 region around the detection center while ensuring the crop stays within image boundaries.
         Resizes the image **before cropping** to ensure correct detection alignment.
@@ -477,8 +477,9 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             "WY",
             "BC",
         }
-        ga = {"GA"}
-        ny = {"NY"}
+        SE_OON = {"GA", "FL", "NC", "LA", "SC", "VA"}
+        NE_OON = {"NY", "OH", "MI", "NH", "NJ", "RI", "CT", "DE", "ME", "MD", "MA", "PA", "VT", "WV"}
+        SW_OON = {"NL", "GJ"}
 
         for car_detection in car_list:
             dest_state = car_detection[12]
@@ -490,10 +491,12 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 car_detection.append("the Southwest Corridor")
             elif dest_state in northwest_corridor:
                 car_detection.append("the Northwest Corridor")
-            elif dest_state in ga:
-                car_detection.append("GA")
-            elif dest_state in ny:
-                car_detection.append("NY")
+            elif dest_state in SE_OON:
+                car_detection.append("the SE, Out of Network")
+            elif dest_state in NE_OON:
+                car_detection.append("the NE, Out of Network")
+            elif dest_state in SW_OON:
+                car_detection.append("the SW, Out of Network")
             else:
                 car_detection.append("an Unknown Corridor")
 
@@ -1098,9 +1101,9 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                         procd_train_data[car_id] = train_data
 
                     try:
-                        train_data = train_data["notebook_output"]["result"].split("'")
-                        car_detail_list.extend([train_data[1], train_data[3], train_data[5], image])
-                        symbol_car_key = f"{train_data[1]}-{car_id}"
+                        train_data = json.loads(train_data["notebook_output"]["result"].strip("'"))[0]
+                        car_detail_list.extend([train_data['trn_id'].strip(), train_data['dest_city_frefrm'].strip()[0], train_data['dest_st'].strip(), image])
+                        symbol_car_key = f"{train_data['trn_id']}-{car_id}"
                     except KeyError:
                         car_detail_list.extend(["SymbolNotFound", "NA", "NA", image])
                         symbol_car_key = f"SymbolNotFound-{car_id}"
@@ -1132,4 +1135,4 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                     update_tracking_dict(tracking_dict, processed_symbol_car_keys)
                     save_tracking_dict(tracking_dict)
 
-    logging.info("Python timer trigger function executed.")
+    logging.info("Python timer trigger function execution")

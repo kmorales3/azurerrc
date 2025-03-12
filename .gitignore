@@ -5,6 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
+inference_log.csv
 
 # Distribution / packaging
 .Python
@@ -133,3 +134,4 @@ __blobstorage__
 __queuestorage__
 __azurite_db*__.json
 .python_packages
+inference_log.csv
