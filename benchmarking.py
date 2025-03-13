@@ -106,16 +106,6 @@ def execute_notebook(databricks_instance, token, notebook_path, car_id,
     return output_response.json()
 
 
-# Databricks lookup (Needed for LOCAL_RUN too)
-# databricks_instance = "https://adb-2326721360835808.8.azuredatabricks.net"
-# databricks_token = "dapi391e2e21c61adb340d5bdf76d9e361e2"
-# db_notebook_path = "/Workspace/Users/kevin.morales@bnsf.com/optimized_train_detail"
-
-databricks_instance = "https://adb-2326721360835808.8.azuredatabricks.net"
-databricks_token = "dapi6e281d134eaa902e70b837ade662ade3"
-db_notebook_path = "/Workspace/Users/evan.tarian@bnsf.com/Clone RoboRailCop"
-
-
 for car_id, car_number in TEST_CARS:
     for i in range(NUM_RUNS):
         start_time = time.time()
