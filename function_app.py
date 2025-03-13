@@ -33,19 +33,9 @@ import itertools
 
 app = func.FunctionApp()
 
-# Constants
-MAX_EMAIL_SIZE = 20 * 1024 * 1024  # 20MB
-CENTRAL_TZ = pytz.timezone("US/Central")
-MOUNTAIN_TZ = pytz.timezone("US/Mountain")
-UTC_TZ = pytz.utc
-TIMEZONES = {
-    "Mountain": MOUNTAIN_TZ,
-    "Central": CENTRAL_TZ,
-    "UTC": UTC_TZ,
-}
-MODEL_PATH = r"C:\Users\c883206\OneDrive - BNSF Railway\RoboRailCop\cnn_model_dev\final_trainings\v3.2.1_full_send\weights\last.pt"
+MODEL_PATH = r"/Users/kevinmorales/Documents/Work Stuff/azurerrc/azurerrc/azurerrc/last.pt"
 LOCAL_RUN = True
-LOCAL_PASS_DIR = r"C:\Users\c883206\Downloads\031025_092400_email"
+LOCAL_PASS_DIR = r'/Users/kevinmorales/Downloads/2025-03-07 1514_1517'
 LOG_FILE = "inference_log.csv"
 
 
@@ -96,7 +86,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         def add_detection(self, detection):
             self.pass_detections.append(detection.__dict__)
 
-    def process_car_images(grouped_cars, model, confidence_threshold, crop_size=(1280, 768), proximity_threshold=3000):
+    def process_car_images(grouped_cars, model, confidence_threshold, crop_size=(1280, 768), proximity_threshold=5000):
         """
         Process car images, run inference on in-memory images (from Azure), group detections into regions,
         pare down car_details to the highest camera entry, and append crops to that entry.
@@ -492,11 +482,11 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             elif dest_state in northwest_corridor:
                 car_detection.append("the Northwest Corridor")
             elif dest_state in SE_OON:
-                car_detection.append("the SE, Out of Network")
+                car_detection.append("the SE, Out of Network,")
             elif dest_state in NE_OON:
-                car_detection.append("the NE, Out of Network")
+                car_detection.append("the NE, Out of Network,")
             elif dest_state in SW_OON:
-                car_detection.append("the SW, Out of Network")
+                car_detection.append("the SW, Out of Network,")
             else:
                 car_detection.append("an Unknown Corridor")
 
@@ -695,14 +685,14 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             distribution_list = os.environ.get("NE_CORRIDOR")
         elif corridor == "the Southeast Corridor":
             distribution_list = os.environ.get("SE_CORRIDOR")
-        elif corridor == "the Southwest Corridor":
+        elif corridor == "the Southwest Corridor" or corridor == "the SW, Out of Network,":
             distribution_list = os.environ.get("SW_CORRIDOR")
         elif corridor == "the Northwest Corridor":
             distribution_list = os.environ.get("NW_CORRIDOR")
-        elif corridor == "GA":
-            distribution_list = os.environ.get("GA_TRAINS")
-        elif corridor == "NY":
-            distribution_list = os.environ.get("NY_TRAINS")
+        elif corridor == "the SE, Out of Network,":
+            distribution_list = os.environ.get("SE_OON")
+        elif corridor == "the NE, Out of Network,":
+            distribution_list = os.environ.get("NE_OON")
         else:
             distribution_list = ""
 
@@ -921,13 +911,13 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                     image.save(buffered, format="JPEG")
 
                 # Add the image to the list of attachments
-                # attachments.append((buffered.getvalue(), f"{dest_car_id}.jpg"))
+                attachments.append((buffered.getvalue(), f"{dest_car_id}.jpg"))
         else:
             # No resizing needed, add original images to attachments
             for image, dest_car_id, _ in images:
                 buffered = io.BytesIO()
                 image.save(buffered, format="JPEG")
-                # attachments.append((buffered.getvalue(), f"{dest_car_id}.jpg"))
+                attachments.append((buffered.getvalue(), f"{dest_car_id}.jpg"))
 
         return body, attachments
 
@@ -1102,7 +1092,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
                     try:
                         train_data = json.loads(train_data["notebook_output"]["result"].strip("'"))[0]
-                        car_detail_list.extend([train_data['trn_id'].strip(), train_data['dest_city_frefrm'].strip()[0], train_data['dest_st'].strip(), image])
+                        car_detail_list.extend([train_data['trn_id'].strip(), train_data['dest_city_frefrm'].strip(), train_data['dest_st'].strip(), image])
                         symbol_car_key = f"{train_data['trn_id']}-{car_id}"
                     except KeyError:
                         car_detail_list.extend(["SymbolNotFound", "NA", "NA", image])
