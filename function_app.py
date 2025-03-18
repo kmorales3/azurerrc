@@ -34,9 +34,12 @@ import itertools
 app = func.FunctionApp()
 
 MODEL_PATH = r"/Users/kevinmorales/Documents/Work Stuff/azurerrc/azurerrc/azurerrc/last.pt"
-LOCAL_RUN = True
+LOCAL_RUN = False
 LOCAL_PASS_DIR = r'/Users/kevinmorales/Downloads/2025-03-07 1514_1517'
 LOG_FILE = "inference_log.csv"
+STORAGE_CONN_STR = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+CONTAINER_NAME = "tracking"
+TRACKING_FILE = "tracking.json"
 
 
 @app.timer_trigger(schedule="0 */1 * * * *", arg_name="myTimer",
@@ -643,42 +646,68 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         return pass_list
 
+    def convert_for_serialization(obj):
+        """Recursively converts datetime objects and bytes (images) for JSON serialization."""
+        if isinstance(obj, datetime):
+            return obj.isoformat()  # Convert datetime to string
+
+        elif isinstance(obj, bytes):  # 🔥 Convert image bytes to Base64
+            return base64.b64encode(obj).decode("utf-8")
+
+        elif isinstance(obj, dict):
+            return {key: convert_for_serialization(value) for key, value in obj.items()}  # Process dict values
+
+        elif isinstance(obj, list):
+            for i in [3, 9]:  # Convert datetime at indices 3 & 9 if they exist
+                if i < len(obj) and isinstance(obj[i], datetime):
+                    obj[i] = obj[i].isoformat()
+            return [convert_for_serialization(item) for item in obj]  # Convert list elements
+
+        return obj  # Return as-is if not a datetime, dict, bytes, or list
+
     def load_tracking_dict():
-        key_vault_name = os.environ["KEY_VAULT_NAME"]
-        secret_name = "tracking-dict"
-        kv_uri = f"https://{key_vault_name}.vault.azure.net/"
+        """Loads tracking data from Blob Storage."""
+        blob_service_client = BlobServiceClient.from_connection_string(STORAGE_CONN_STR)
+        blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, TRACKING_FILE)
 
-        credential = DefaultAzureCredential()
-        client = SecretClient(vault_url=kv_uri, credential=credential)
+        try:
+            tracking_data = json.loads(blob_client.download_blob().readall())
+            return tracking_data
+        except Exception:
+            return {}  # Return empty dict if file doesn't exist yet
 
-        secret = client.get_secret(secret_name)
-        tracking_dict = json.loads(secret.value)
-        return tracking_dict
-
-    def update_tracking_dict(tracking_dict, processed_keys=set()):
-        for key in processed_keys:
+    def update_tracking_dict(tracking_dict, new_entries):
+        """
+        Updates the tracking dictionary:
+        - Increments `executions_since_addition` for existing keys
+        - Adds new keys with counter = 1
+        - Deletes entries after 4 executions
+        """
+        for key, blob_name in new_entries.items():
             if key in tracking_dict:
                 tracking_dict[key]["executions_since_addition"] += 1
-                if tracking_dict[key]["executions_since_addition"] > 3:
-                    del tracking_dict[key]
+                tracking_dict[key]["blobs"].append(blob_name)
             else:
-                tracking_dict[key] = {"executions_since_addition": 1}
+                tracking_dict[key] = {"executions_since_addition": 1, "blobs": [blob_name]}
+
+        # Remove old entries
         for key in list(tracking_dict.keys()):
-            if key not in processed_keys:
-                tracking_dict[key]["executions_since_addition"] += 1
-                if tracking_dict[key]["executions_since_addition"] > 3:
-                    del tracking_dict[key]
+            if tracking_dict[key]["executions_since_addition"] > 3:
+                del tracking_dict[key]
 
-    def save_tracking_dict(new_dict):
-        key_vault_name = os.environ["KEY_VAULT_NAME"]
-        secret_name = "tracking-dict"
-        kv_uri = f"https://{key_vault_name}.vault.azure.net"
+        return tracking_dict
 
-        credential = DefaultAzureCredential()
-        client = SecretClient(vault_url=kv_uri, credential=credential)
+    def save_tracking_dict(tracking_dict):
+        """Saves the tracking dictionary to Blob Storage."""
+        
+        blob_service_client = BlobServiceClient.from_connection_string(STORAGE_CONN_STR)
+        blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, TRACKING_FILE)
+        
+        # 🔥 Convert datetime & bytes before saving
+        sanitized_dict = convert_for_serialization(tracking_dict)
 
-        new_secret_value = json.dumps(new_dict)
-        client.set_secret(secret_name, new_secret_value)
+        blob_client.upload_blob(json.dumps(sanitized_dict, indent=2), overwrite=True)
+        print("✅ Tracking dictionary updated in Blob Storage.")
 
     def create_mail_attachment(html_body, subject, corridor):
         if corridor == "the Northeast Corridor":
@@ -709,223 +738,149 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         return temp_file_path, f"{corridor}.eml"
 
-    def format_email_body(processed_pass_data, logger):
-        attachments = []
-        max_email_size = 35 * 1024 * 1024  # 35MB
 
-        # Collect all images and their sizes
-        images = []
+    def generate_email_body_text(corridor, train_passes):
+        """Generates a DataFrame containing email body text."""
+        subject_line = f"Hello,<br><br>Please see the below open door(s) identified by RoboRailCop. "
+        if len(train_passes) < 2:
+            subject_line += f"This train is destined for {corridor} with # open container(s).<br><br>"
+        else:
+            subject_line += f"These trains are destined for {corridor} with # open container(s).<br><br>"
+        
+        subject_line += "Thank you,<br>RoboRailCop Team<br><br>"
+        
+        email_df = pd.DataFrame({"Email Body": [subject_line]})
+        return email_df
 
-        # Collect data for the main body DataFrame
+    def process_train_pass_data(processed_pass_data):
+        """Processes train pass details and returns a structured DataFrame."""
         main_body_data = []
-
+        
         for corridor, train_passes in processed_pass_data.items():
-            if len(train_passes) < 2:
-                attachment_body = f"Hello,<br><br>Please see the below open door(s) identified by RoboRailCop. This train is destined for {corridor} with # open container(s).<br><br>Thank you,<br>RoboRailCop Team<br><br>"
-            else:
-                attachment_body = f"Hello,<br><br>Please see the below open door(s) identified by RoboRailCop. These trains are destined for {corridor} with # open container(s).<br><br>Thank you,<br>RoboRailCop Team<br><br>"
-
-            train_symbols = []
-
             for train_pass in train_passes:
                 train_symbol = train_pass.pass_data["Train Symbol"]
-                if train_symbol not in train_symbols and \
-                        isinstance(train_symbol, str):
-                    train_symbols.append(train_symbol)  # Collect train symbols
-
                 train_destination = train_pass.pass_data["Train Destination"]
 
                 trn_arrival_dt_mt = format_dt_times(
                     train_pass.pass_data["Train Arrival Date/Time"], "Mountain"
                 )
 
-                # Collect detection information
+                # Process detections
                 for detection in train_pass.pass_detections:
                     detection_created_at_mt = format_dt_times(
                         detection["detection_data"]["Created at"], "Mountain"
                     )
                     detection_car_id = detection["detection_data"]["Car ID"]
 
-                    # Define the Central Time Zone
-                    central_tz = pytz.timezone("US/Central")
+                    now_central = datetime.now(pytz.timezone("US/Central"))
 
-                    # Get the current time in UTC
-                    now_utc = datetime.now(pytz.utc)
+                    main_body_data.append({
+                        "Email Date/Time (CT)": now_central.strftime("%Y/%m/%d %H:%M:%S"),
+                        "Train Symbol": train_symbol,
+                        "Arrival Date/Time (CT)": format_dt_times(
+                            train_pass.pass_data["Train Arrival Date/Time"], "Central"
+                        ),
+                        "Destination": train_destination,
+                        "Detection Created At (CT)": format_dt_times(
+                            detection["detection_data"]["Created at"], "Central"
+                        ),
+                        "Detection Car ID": detection_car_id,
+                        "Open Doors": len(detection['crops']['crops']),
+                    })
+                    
+                    # Update detection timestamps
+                    detection["detection_data"]["Created at"] = detection_created_at_mt
+                
+                # Update train arrival time
+                train_pass.pass_data["Train Arrival Date/Time"] = trn_arrival_dt_mt
+        
+        return pd.DataFrame(main_body_data)
 
-                    # Convert the current time to Central Time
-                    now_central = now_utc.astimezone(central_tz)
-
-                    # Add the key information to the main body data
-                    main_body_data.append(
-                        {
-                            "Email Date/Time (CT)": now_central.strftime(
-                                "%Y/%m/%d %H:%M:%S"
-                            ),
-                            "Train Symbol": train_symbol,
-                            "Arrival Date/Time (CT)": format_dt_times(
-                                train_pass.pass_data
-                                ["Train Arrival Date/Time"],
-                                "Central",
-                            ),
-                            "Destination": train_destination,
-                            "Detection Created At (CT)": format_dt_times(
-                                detection["detection_data"]["Created at"],
-                                "Central"
-                            ),
-                            "Detection Car ID": detection_car_id,
-                            "Open Doors": len(detection['crops']['crops']),
-                        }
-                    )
-
-                    detection["detection_data"]["Created at"] = \
-                        detection_created_at_mt
-
-                train_pass.pass_data["Train Arrival Date/Time"] = \
-                    trn_arrival_dt_mt
-
-                # Drop the "Destination Corridor" key and value
-                pass_data = train_pass.pass_data.copy()
-                pass_data.pop("Destination Corridor", None)
-
-                # Convert pass_data to a transposed DataFrame with no index
-                pass_data_df = pd.DataFrame(pass_data, index=[0]).T
-
-                # Prepare the attachment body
-                attachment_body += "Train Pass:<br>"
-                attachment_body += pass_data_df.to_html(header=False)
-                attachment_body += "<br>Detections:<br>"
-                for detection in train_pass.pass_detections:
-                    detections_df = pd.DataFrame(detection["detection_data"],
-                                                 index=[0]).T
-                    attachment_body += detections_df.to_html(header=False)
-                    attachment_body += "<br>"
-
-                    # Process crops (embed in the email)
-                    if "crops" in detection and "crops" in detection["crops"] and detection["crops"]["crops"]:
-                        for idx, crop_image in enumerate(detection["crops"]["crops"]):  # Already a PIL Image
-                            try:
-                                crop_buffer = io.BytesIO()
-                                crop_image.save(crop_buffer, format="JPEG")  # Save as JPEG
-                                crop_bytes = crop_buffer.getvalue()  # Extract raw bytes
-                                crop_encoded = base64.b64encode(crop_bytes).decode()  # Encode to Base64
-
-                                # Embed the crop image
-                                attachment_body += f'<img src="data:image/jpeg;base64,{crop_encoded}" width="2200"> '
-                                attachment_body += "<br><br>"
-
-                            except IOError:
-                                raise ValueError("Invalid crop image data")
-
-                    # Process image
-                    image_data = detection["car_image"]
-
-                    # Ensure image_data is not None and is of type bytes
-                    if not isinstance(image_data, bytes):
-                        raise ValueError("image_data must be of type bytes")
-
-                    # Open the image from the byte stream
+    def process_images_for_email(detections, max_email_size=35 * 1024 * 1024):
+        """Processes images and returns a list of Base64-encoded images and attachments."""
+        images = []
+        total_image_size = 0
+        
+        for detection in detections:
+            if "crops" in detection and "crops" in detection["crops"] and detection["crops"]["crops"]:
+                for crop_image in detection["crops"]["crops"]:
                     try:
-                        image = Image.open(io.BytesIO(image_data))
+                        crop_buffer = io.BytesIO()
+                        crop_image.save(crop_buffer, format="JPEG")
+                        crop_bytes = crop_buffer.getvalue()
+                        crop_encoded = base64.b64encode(crop_bytes).decode()
+
+                        images.append({
+                            "Encoded Image": f'<img src="data:image/jpeg;base64,{crop_encoded}" width="2200">',
+                            "Size": len(crop_bytes)
+                        })
+                        total_image_size += len(crop_bytes)
                     except IOError:
-                        raise ValueError("Invalid image data")
+                        raise ValueError("Invalid crop image data")
 
-                    # Save the image to a buffer
+        # Resize images if needed
+        if total_image_size > max_email_size:
+            remaining_space = max_email_size - total_image_size
+            avg_space_per_image = remaining_space // len(images) if images else 0
+
+            resized_images = []
+            for img in images:
+                if img["Size"] > avg_space_per_image:
+                    img_obj = Image.open(io.BytesIO(base64.b64decode(img["Encoded Image"].split(",")[1])))
+                    scaling_factor = (avg_space_per_image / img["Size"]) ** 0.5
+                    new_width, new_height = int(img_obj.width * scaling_factor), int(img_obj.height * scaling_factor)
+                    img_obj = img_obj.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
                     buffered = io.BytesIO()
-                    image.save(buffered, format="JPEG")
-                    image_size = buffered.tell()
+                    img_obj.save(buffered, format="JPEG")
+                    img_bytes = buffered.getvalue()
 
-                    # Collect image data
-                    images.append(
-                        (
-                            image,
-                            f"{corridor}_{detection['detection_data']['Car ID']}",
-                            image_size,
-                        )
-                    )
-
-                attachment_body += "<br><br>"
-
-            # Add CSS to remove borders, ensure text stays on one line,
-            # left-align text, and add padding
-            attachment_body = (
-                """
-            <style>
-                .dataframe {
-                    border: 0;
-                    text-align: left;
-                    white-space: nowrap;
-                }
-                .dataframe td, .dataframe th {
-                    border: 0 !important;
-                    white-space: nowrap;
-                    text-align: left;
-                    padding: 0 10px;
-                }
-            </style>
-            """
-                + attachment_body
-            )
-
-            subject = "RoboRailCop: Open Intermodal Container/Trailer Door Detected: " + (", ".join(train_symbols))
-
-            attachments.append(create_mail_attachment(attachment_body,
-                                                      subject, corridor))
-
-        # Create the main body DataFrame
-        main_body_df = pd.DataFrame(main_body_data)
-
-        # Convert the main body DataFrame to HTML
-        body = main_body_df.to_html(index=False)
-
-        # Calculate the size of the email body
-        body_size = len(body.encode("utf-8"))
-
-        # Calculate the total size of the original images
-        total_image_size = sum(image_size for _, _, image_size in images)
-
-        # Check if resizing is necessary
-        if body_size + total_image_size > max_email_size:
-            # Calculate the remaining space for images
-            remaining_space = max_email_size - body_size
-
-            # Calculate the average space available per image
-            avg_space_per_image = remaining_space // len(images) if \
-                images else 0
-
-            # Resize images if necessary
-            for image, dest_car_id, image_size in images:
-                if image_size > avg_space_per_image:
-                    scaling_factor = (avg_space_per_image / image_size) ** 0.5
-                    new_width = int(image.width * scaling_factor)
-                    new_height = int(image.height * scaling_factor)
-                    image = image.resize((new_width, new_height),
-                                         Image.Resampling.LANCZOS)
-
-                    # Save the resized image to a buffer
-                    buffered = io.BytesIO()
-                    image.save(buffered, format="JPEG")
-                    image_size = buffered.tell()
+                    resized_images.append({
+                        "Encoded Image": f'<img src="data:image/jpeg;base64,{base64.b64encode(img_bytes).decode()}" width="2200">',
+                        "Size": len(img_bytes)
+                    })
                 else:
-                    # Save the original image to a buffer
-                    buffered = io.BytesIO()
-                    image.save(buffered, format="JPEG")
+                    resized_images.append(img)
 
-                # Add the image to the list of attachments
-                attachments.append((buffered.getvalue(), f"{dest_car_id}.jpg"))
+            return resized_images
         else:
-            # No resizing needed, add original images to attachments
-            for image, dest_car_id, _ in images:
-                buffered = io.BytesIO()
-                image.save(buffered, format="JPEG")
-                attachments.append((buffered.getvalue(), f"{dest_car_id}.jpg"))
+            return images
 
-        return body, attachments
+    def format_email_body(processed_pass_data):
+        """Main function to format email content and images."""
+        attachments = []
+        
+        body_df = pd.DataFrame()
+        
+        for corridor, train_passes in processed_pass_data.items():
+            email_body_df = generate_email_body_text(corridor, train_passes)
+            train_pass_df = process_train_pass_data(processed_pass_data)
+            
+            # Get images as Base64
+            all_detections = [d for train_pass in train_passes for d in train_pass.pass_detections]
+            images = process_images_for_email(all_detections)
+            
+            # Convert images to DataFrame
+            images_df = pd.DataFrame(images)
+            
+            # Combine DataFrames
+            final_email_df = pd.concat([email_body_df, train_pass_df, images_df], axis=1)
+            
+            # Store final result
+            body_df = pd.concat([body_df, final_email_df], ignore_index=True)
+            
+            subject = "RoboRailCop: Open Intermodal Container/Trailer Door Detected"
+            attachments.append(create_mail_attachment(body_df.to_html(index=False), subject, corridor))
+        
+        return body_df, attachments
 
-    def send_email(body, logger, attachments=[]):
+
+    def compose_email(body_html, attachments, logger):
+        """Composes the email message with HTML body and attachments."""
+        
         from_address = os.environ.get("OUTLOOK_FROM_EMAIL")
         group_mailbox = os.environ.get("OUTLOOK_GROUP_MAILBOX")
         to_addresses = os.environ.get("OUTLOOK_TO_EMAIL").split(",")
-
         subj_prefix = os.environ.get("EMAIL_SUBJ_PRFX")
 
         msg = MIMEMultipart("related")
@@ -934,7 +889,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         msg["Subject"] = f"{subj_prefix}: Open Intermodal Container/Trailer Door Detected"
 
         # Create the HTML part
-        html_part = MIMEText(body, "html")
+        html_part = MIMEText(body_html, "html")  # Convert to HTML
         msg.attach(html_part)
 
         # Attach any attachments
@@ -954,11 +909,17 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 part.set_payload(attachment)
 
             encoders.encode_base64(part)
-            part.add_header(
-                "Content-Disposition",
-                f'attachment; filename="{filename}"',
-            )
+            part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
             msg.attach(part)
+
+        return msg
+
+    def send_email(msg, logger):
+        """Handles the actual sending of the email via SMTP."""
+        
+        from_address = os.environ.get("OUTLOOK_FROM_EMAIL")
+        group_mailbox = os.environ.get("OUTLOOK_GROUP_MAILBOX")
+        to_addresses = os.environ.get("OUTLOOK_TO_EMAIL").split(",")
 
         try:
             outlook_pswd = os.environ.get("OUTLOOK_PSWD")
@@ -1058,7 +1019,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         if pass_files:
             car_list = []
-            processed_symbol_car_keys = set()
+            processed_symbol_car_keys = {}
 
             for image, file_name, detection_upload_dt_time in pass_files:
                 if file_name.endswith('.jpg'):
@@ -1091,21 +1052,31 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                         procd_train_data[car_id] = train_data
 
                     try:
-                        train_data = json.loads(train_data["notebook_output"]["result"].strip("'"))[0]
-                        car_detail_list.extend([train_data['trn_id'].strip(), train_data['dest_city_frefrm'].strip(), train_data['dest_st'].strip(), image])
-                        symbol_car_key = f"{train_data['trn_id']}-{car_id}"
+                        train_data = json.loads(train_data["notebook_output"]["result"].strip("'"))
+                        car_detail_list.extend([train_data['data']['trn_id'].strip(), train_data['data']['dest_city_frefrm'].strip(), train_data['data']['dest_st'].strip(), image])
+                        symbol_car_key = f"{train_data['data']['trn_id']}-{car_id}"
                     except KeyError:
                         car_detail_list.extend(["SymbolNotFound", "NA", "NA", image])
                         symbol_car_key = f"SymbolNotFound-{car_id}"
 
                     if not LOCAL_RUN:
+                        # Store new detections
                         if symbol_car_key not in processed_symbol_car_keys:
-                            processed_symbol_car_keys.add(symbol_car_key)
+                            processed_symbol_car_keys[symbol_car_key] = [car_detail_list]  # First blob
+                        else:
+                            processed_symbol_car_keys[symbol_car_key].append(car_detail_list)  # Append new blobs
 
-                        if symbol_car_key in tracking_dict and tracking_dict[symbol_car_key]["executions_since_addition"] == 3:
-                            car_list.append(car_detail_list)
-                    else:
-                        car_list.append(car_detail_list)  # Always process in local runs
+                    # 🔥 Step 1: Process cars that have reached 4th execution
+                    for symbol_car_key, data in tracking_dict.items():
+                        if data["executions_since_addition"] == 3:  # 🔥 Ready for processing
+                            if symbol_car_key in processed_symbol_car_keys:
+                                car_list.extend(processed_symbol_car_keys[symbol_car_key])  # Process all blobs collected
+                            else:
+                                print(f"🚨 Warning: {symbol_car_key} reached 4 executions but has no collected blobs!")
+
+                    # 🔥 Step 2: Always process in local runs
+                    if LOCAL_RUN:
+                        car_list.append(car_detail_list)
 
             if car_list:
                 corridor_grouped_cars = group_by_corridor(car_list)
@@ -1113,16 +1084,17 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 car_grouped_symbols = group_by_car_id(corr_symbol_car_grps)
 
                 model = YOLO(MODEL_PATH)
-                best_detection_dict = process_car_images(car_grouped_symbols, model, .2 )
+                best_detection_dict = process_car_images(car_grouped_symbols, model, .2)
 
                 processed_pass_data = create_train_pass_objects(best_detection_dict)
 
                 if processed_pass_data:
-                    body, attachments = format_email_body(processed_pass_data, logger)
-                    send_email(body, logger, attachments)
+                    body, attachments = format_email_body(processed_pass_data)
+                    comp_body = compose_email(body.to_html(index=False), attachments, logger)
+                    send_email(comp_body, logger)
 
-                if not LOCAL_RUN:
-                    update_tracking_dict(tracking_dict, processed_symbol_car_keys)
-                    save_tracking_dict(tracking_dict)
+            if not LOCAL_RUN:
+                update_tracking_dict(tracking_dict, processed_symbol_car_keys)
+                save_tracking_dict(tracking_dict)
 
     logging.info("Python timer trigger function execution")

@@ -135,7 +135,6 @@ __blobstorage__
 __queuestorage__
 __azurite_db*__.json
 .python_packages
-inference_log.csv
+*.csv
 last.pt
 .vscode/PythonImportHelper-v2-Completion.json
-inference_log.csv
