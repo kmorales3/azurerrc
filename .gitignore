@@ -138,3 +138,6 @@ __azurite_db*__.json
 *.csv
 last.pt
 .vscode/PythonImportHelper-v2-Completion.json
+Archive.zip
+.DS_Store
+inference_log.csv
