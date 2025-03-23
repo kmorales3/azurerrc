@@ -9,7 +9,7 @@ from ultralytics import YOLO
 
 from mods.blob_ops import get_blob_service_client, download_passes, get_recent_passes
 from mods.tracking import load_tracking_dict, update_tracking_dict, save_tracking_dict
-from mods.pass_processing import process_pass_files, parse_car_details_from_filename, enrich_with_train_data
+from mods.pass_processing import parse_car_details_from_filename, enrich_with_train_data
 from mods.email_composition import format_email_body, compose_email, send_email
 from mods.pass_processing import (
     group_by_corridor,
@@ -26,7 +26,7 @@ LOCAL_PASS_DIR = r'/Users/kevinmorales/Downloads/2025-03-07 1514_1517'
 app = func.FunctionApp()
 
 
-@app.timer_trigger(schedule="0 */1 * * * *", arg_name="myTimer",
+@app.timer_trigger(schedule="*/5 * * * * *", arg_name="myTimer",
                    run_on_startup=False, use_monitor=False)
 def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
@@ -41,8 +41,10 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                 connection_string=os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
             )
         )
-
+        
+    processed_symbol_car_keys = {}
     procd_train_data = {}
+    car_list = []
 
     if not LOCAL_RUN:
         blob_service_client = get_blob_service_client()
@@ -57,7 +59,8 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         recent_passes = [
             os.path.join(LOCAL_PASS_DIR, file) for file in os.listdir(LOCAL_PASS_DIR)
         ]
-
+        
+    # 🔥 Step 1: Handle new passes if present
     if recent_passes:
         if LOCAL_RUN:
             pass_files = [
@@ -72,9 +75,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             pass_files = download_passes(container_client, recent_passes)
 
         if pass_files:
-            car_list = []
-            processed_symbol_car_keys = {}
-
             for image, file_name, detection_upload_dt_time in pass_files:
                 if file_name.endswith(".jpg"):
                     car_detail_list = parse_car_details_from_filename(file_name, detection_upload_dt_time)
@@ -83,37 +83,40 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
                     if not LOCAL_RUN:
                         if symbol_car_key not in processed_symbol_car_keys:
-                            processed_symbol_car_keys[symbol_car_key] = car_detail_list
+                            processed_symbol_car_keys[symbol_car_key] = [car_detail_list]
                         else:
                             processed_symbol_car_keys[symbol_car_key].append(car_detail_list)
 
                     if LOCAL_RUN:
                         car_list.append(car_detail_list)
-                        
-            if not LOCAL_RUN:
-                for key, data in tracking_dict.items():
-                    if data["executions_since_addition"] >= 3:
-                        if data.get("blobs"):
-                            car_list.extend(data["blobs"])
-                        else:
-                            print(f"🚨 Warning: {key} reached 4 executions but has no collected blobs!")
 
-            if car_list:
-                corridor_grouped = group_by_corridor(car_list)
-                symbol_grouped = group_by_train_symbol(corridor_grouped)
-                car_grouped = group_by_car_id(symbol_grouped)
+    # 🔥 Step 2: Always check for ready-to-process tracking entries (even without new files)
+    if not LOCAL_RUN:
+        for key, data in tracking_dict.items():
+            if data["executions_since_addition"] >= 3:
+                if data.get("blobs"):
+                    car_list.extend(data["blobs"])
+                else:
+                    print(f"🚨 Warning: {key} reached 4 executions but has no collected blobs!")
 
-                model = YOLO(MODEL_PATH)
-                detection_dict = process_car_images(car_grouped, model, 0.2)
-                processed_data = create_train_pass_objects(detection_dict)
+    # 🔥 Step 3: Process if we have anything to work with
+    if car_list:
+        corridor_grouped = group_by_corridor(car_list)
+        symbol_grouped = group_by_train_symbol(corridor_grouped)
+        car_grouped = group_by_car_id(symbol_grouped)
 
-                if processed_data:
-                    body, attachments = format_email_body(processed_data)
-                    email_msg = compose_email(body.to_html(index=False), attachments, logger)
-                    send_email(email_msg, logger)
+        model = YOLO(MODEL_PATH)
+        detection_dict = process_car_images(car_grouped, model, 0.2)
+        processed_data = create_train_pass_objects(detection_dict)
 
-            if not LOCAL_RUN:
-                update_tracking_dict(tracking_dict, processed_symbol_car_keys)
-                save_tracking_dict(tracking_dict)
+        if processed_data:
+            body, attachments = format_email_body(processed_data)
+            email_msg = compose_email(body.to_html(index=False), attachments, logger)
+            send_email(email_msg, logger)
+
+    # 🔥 Step 4: Update tracking dict even if no new passes were found
+    if not LOCAL_RUN:
+        tracking_dict = update_tracking_dict(tracking_dict, processed_symbol_car_keys)
+        save_tracking_dict(tracking_dict)
 
     logging.info("Python timer trigger function execution")

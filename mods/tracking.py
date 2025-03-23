@@ -32,25 +32,26 @@ def update_tracking_dict(tracking_dict, new_entries):
     for key in list(tracking_dict.keys()):
         tracking_dict[key]["executions_since_addition"] += 1
 
-    # 🔥 Update or create entries
-    for key, blob_name in new_entries.items():
-        cam_name = blob_name[7] if len(blob_name) > 7 else None
+    for key, blob_list in new_entries.items():  # blob_list is a list of blob entries
+        if key not in tracking_dict:
+            tracking_dict[key] = {
+                "executions_since_addition": 1,
+                "blobs": []
+            }
 
-        if key in tracking_dict:
-            # Get existing camera names already tracked
-            existing_cams = {b[7] for b in tracking_dict[key]["blobs"] if len(b) > 7}
+        existing_cams = {b[7] for b in tracking_dict[key]["blobs"] if len(b) > 7}
 
-            # 🔥 Only append blob if camera is new
+        for blob in blob_list:  # 🔥 iterate through the actual blobs
+            cam_name = blob[7] if len(blob) > 7 else None
+
             if cam_name and cam_name not in existing_cams:
-                tracking_dict[key]["blobs"].append(blob_name)
-        else:
-            # New entry, start with 1 and include the blob
-            tracking_dict[key] = {"executions_since_addition": 1, "blobs": [blob_name]}
+                tracking_dict[key]["blobs"].append(blob)
+                existing_cams.add(cam_name)  # ✅ update this too so we don’t duplicate
 
-    # 🔥 Clean up anything older than 3 executions
+    # 🔥 Cleanup
     tracking_dict = {
         k: v for k, v in tracking_dict.items()
-        if v["executions_since_addition"] < 3
+        if v["executions_since_addition"] < 4
     }
 
     return tracking_dict

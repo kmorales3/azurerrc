@@ -54,7 +54,6 @@ def process_images_for_email(detections, max_email_size=35 * 1024 * 1024):
     else:
         return images
 
-
 def crop_and_normalize(detection, target_width=1280, target_height=768):
     """
     Crop a 2200x1024 region around the detection center while ensuring the crop stays within image boundaries.
