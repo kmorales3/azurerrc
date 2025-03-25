@@ -578,8 +578,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         return logger
 
-    LOG_FILE = "inference_log.csv"
-
     def augment_image(image):
         """
         Apply a series of random augmentations to simulate different image conditions.
@@ -637,16 +635,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         Returns:
             list: List of detections, each containing x, width, confidence.
         """
-        
-        # Ensure log file has headers if it doesn't exist
-        if not os.path.exists(LOG_FILE):
-            with open(LOG_FILE, mode="w", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerow([
-                    "Original Width", "Original Height", "Resized Width", "Resized Height",
-                    "Flipped", "Augmentation Index", "Detection X", "Detection Width",
-                    "Detection Confidence", "Accepted"
-                ])
                 
         original_width, original_height = image.size
         width_scale_factor = reference_width / original_width
@@ -681,14 +669,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                         width = int((x_max - x_min) * width_scale_factor)  # Adjust width to reference width
                         confidence = float(confidence)
                         accepted = confidence >= confidence_threshold
-
-                        # Log detection info
-                        with open(LOG_FILE, mode="a", newline="") as file:
-                            writer = csv.writer(file)
-                            writer.writerow([
-                                original_width, original_height, resized_width, resized_height,
-                                flipped, x, width, confidence, accepted
-                            ])
 
                         if accepted:
                             all_detections.append({'x': x, 'width': width, 'confidence': confidence,

@@ -9,3 +9,5 @@ test
 models
 .idea
 *.csv
+benchmarking.py
+f_app.zip
