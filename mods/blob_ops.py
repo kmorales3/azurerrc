@@ -5,9 +5,9 @@ from datetime import datetime, timezone, timedelta
 
 
 def get_blob_service_client():
-    account_url = os.environ.get("AZURE_STRG_ACCT_URL")
+    account_url = os.environ.get("MIDS_IMG_STRG_URL")
     if not account_url:
-        raise ValueError("AZURE_STRG_ACCT_URL environment \
+        raise ValueError("MIDS_IMG_STRG_URL environment \
             variable is missing.")
 
     credential = DefaultAzureCredential()
@@ -61,5 +61,5 @@ def get_container_client():
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     )
-    container_name = os.getenv("CONT_NAME")
+    container_name = os.getenv("MIDS_IMG_CONT_NAME")
     return blob_service_client.get_container_client(container_name)

@@ -210,3 +210,50 @@ def process_car_images(grouped_cars, model, confidence_threshold, crop_size=(128
             updated_grouped_cars[corridor] = updated_train_symbols
 
     return updated_grouped_cars
+
+def prepare_full_size_attachments(detections, max_total_size=20 * 1024 * 1024):
+    """
+    Resizes full-size car images as needed and prepares them as attachments.
+
+    Args:
+        detections (list): List of detections (each with 'car_image').
+        max_total_size (int): Total size allowed for all attachments in bytes.
+
+    Returns:
+        List[Tuple[str, bytes]]: List of (filename, image_bytes) tuples for attachment.
+    """
+    image_entries = []
+    total_size = 0
+
+    for i, detection in enumerate(detections):
+        if "car_image" in detection:
+            image = detection["car_image"]
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG")
+            img_bytes = buffer.getvalue()
+            size = len(img_bytes)
+
+            image_entries.append({
+                "image": image,
+                "bytes": img_bytes,
+                "size": size,
+                "filename": f"car_{i+1}.jpg"
+            })
+            total_size += size
+
+    # Resize images if needed
+    if total_size > max_total_size:
+        avg_size = max_total_size // len(image_entries)
+        for entry in image_entries:
+            if entry["size"] > avg_size:
+                scale = (avg_size / entry["size"]) ** 0.5
+                new_w = int(entry["image"].width * scale)
+                new_h = int(entry["image"].height * scale)
+                resized = entry["image"].resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                buf = io.BytesIO()
+                resized.save(buf, format="JPEG")
+                entry["bytes"] = buf.getvalue()
+                entry["size"] = len(entry["bytes"])
+
+    return [(entry["filename"], entry["bytes"]) for entry in image_entries]

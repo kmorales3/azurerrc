@@ -18,15 +18,16 @@ from mods.pass_processing import (
     create_train_pass_objects
 )
 from mods.image_processing import process_car_images
+from mods.inference import load_model_from_blob
 
-MODEL_PATH = r"/Users/kevinmorales/Documents/Work Stuff/azurerrc/azurerrc/azurerrc/last.pt"
+MODEL_PATH = r"C:\Users\c883206\OneDrive - BNSF Railway\RoboRailCop\azrrc\azurerrc\models\rrc_3_2_1.pt"
 LOCAL_RUN = False
 LOCAL_PASS_DIR = r'/Users/kevinmorales/Downloads/2025-03-07 1514_1517'
 
 app = func.FunctionApp()
 
 
-@app.timer_trigger(schedule="*/5 * * * * *", arg_name="myTimer",
+@app.timer_trigger(schedule="* */15 * * * *", arg_name="myTimer",
                    run_on_startup=False, use_monitor=False)
 def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
@@ -48,7 +49,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
     if not LOCAL_RUN:
         blob_service_client = get_blob_service_client()
-        container_name = os.environ.get("CONT_NAME")
+        container_name = os.environ.get("MIDS_IMG_CONT_NAME")
         container_client = blob_service_client.get_container_client(container_name)
 
         recent_passes = get_recent_passes(
@@ -105,7 +106,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         symbol_grouped = group_by_train_symbol(corridor_grouped)
         car_grouped = group_by_car_id(symbol_grouped)
 
-        model = YOLO(MODEL_PATH)
+        model = load_model_from_blob()
         detection_dict = process_car_images(car_grouped, model, 0.2)
         processed_data = create_train_pass_objects(detection_dict)
 

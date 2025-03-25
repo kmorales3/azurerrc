@@ -3,6 +3,9 @@ import csv
 import logging
 import random
 from PIL import Image, ImageEnhance, ImageOps
+from azure.storage.blob import BlobServiceClient
+import tempfile
+from ultralytics import YOLO  # Adjust the import based on the actual module name
 
 LOG_FILE = "inference_log.csv"
 
@@ -125,3 +128,22 @@ def run_inference(image, model, is_left_camera, confidence_threshold,
     logging.info(f"Final Detections: {len(all_detections)} accepted after confidence filtering.")
     
     return all_detections
+
+def load_model_from_blob():
+    """
+    Downloads the YOLO model from blob storage and loads it into memory.
+    Returns a YOLO model instance.
+    """
+    storage_conn_str = os.environ.get("AZR_APP_STRG_CONN_STRNG")
+    model_blob_path = os.environ.get("MODEL_BLOB_PATH")
+    container_name = os.environ.get("APP_MDL_CONT", "models")  # Adjust if needed
+
+    blob_service_client = BlobServiceClient.from_connection_string(storage_conn_str)
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=model_blob_path)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as temp_model_file:
+        blob_data = blob_client.download_blob().readall()
+        temp_model_file.write(blob_data)
+        model_path = temp_model_file.name
+
+    return YOLO(model_path)

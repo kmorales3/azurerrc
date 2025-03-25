@@ -4,8 +4,8 @@ import base64
 import os
 from azure.storage.blob import BlobServiceClient
 
-STORAGE_CONN_STR = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-CONTAINER_NAME = "tracking"
+STORAGE_CONN_STR = os.environ.get("AZR_APP_STRG_CONN_STRNG")
+CONTAINER_NAME = os.environ.get("APP_TRKNG_CONT")
 TRACKING_FILE = "tracking.json"
 
 def load_tracking_dict():

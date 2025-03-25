@@ -141,3 +141,5 @@ last.pt
 Archive.zip
 .DS_Store
 inference_log.csv
+*.pt
+*.zip
