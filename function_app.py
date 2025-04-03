@@ -20,20 +20,18 @@ import base64
 import io
 from email.mime.base import MIMEBase
 from email import encoders
-import csv
 import random
 from PIL import Image, ImageEnhance, ImageOps
 import re
 import itertools
 import json
 
-MODEL_PATH = r"C:\Users\c883206\OneDrive - BNSF Railway\RoboRailCop\azrrc\azurerrc\models\rrc_3_2_1.pt"
 LOCAL_RUN = False
-LOCAL_PASS_DIR = r'/Users/kevinmorales/Downloads/2025-03-07 1514_1517'
+LOCAL_PASS_DIR = r"C:\Users\c883206\Downloads\testing"
 
 app = func.FunctionApp()
 
-@app.timer_trigger(schedule="*/5 * * * * *", arg_name="myTimer",
+@app.timer_trigger(schedule=os.environ.get("CRON_TIMER", "0 */15 * * * *"), arg_name="myTimer",
                    run_on_startup=False, use_monitor=False)
 def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
@@ -100,7 +98,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         Updates the tracking dictionary:
         - Increments `executions_since_addition` for all existing keys
         - Adds new keys with counter = 1
-        - Only keeps one blob per camera (index 7)
+        - Only keeps one blob per unique camera-axle combination
         - Deletes entries after 4 executions
         """
 
@@ -115,14 +113,20 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                     "blobs": []
                 }
 
-            existing_cams = {b[7] for b in tracking_dict[key]["blobs"] if len(b) > 7}
+            # Combine camera and axle into a unique key
+            existing_cam_axle_keys = {
+                f"{b[7]}-{b[2]}" for b in tracking_dict[key]["blobs"] if len(b) > 7 and len(b) > 2
+            }
 
             for blob in blob_list:  # 🔥 iterate through the actual blobs
                 cam_name = blob[7] if len(blob) > 7 else None
+                axle_value = blob[2] if len(blob) > 2 else None
 
-                if cam_name and cam_name not in existing_cams:
-                    tracking_dict[key]["blobs"].append(blob)
-                    existing_cams.add(cam_name)  # ✅ update this too so we don’t duplicate
+                if cam_name and axle_value:
+                    cam_axle_key = f"{cam_name}-{axle_value}"
+                    if cam_axle_key not in existing_cam_axle_keys:
+                        tracking_dict[key]["blobs"].append(blob)
+                        existing_cam_axle_keys.add(cam_axle_key)  # ✅ update this too so we don’t duplicate
 
         # 🔥 Cleanup
         tracking_dict = {
@@ -190,8 +194,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             or utc_datetime.tzinfo is None
             or utc_datetime.tzinfo.utcoffset(utc_datetime) is None
         ):
-            raise ValueError("The input must be a timezone-aware datetime \
-                object in UTC.")
+            raise ValueError("The input must be a timezone-aware datetime object in UTC.")
 
         # Define the timezones
         timezones = {
@@ -212,10 +215,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         else:
             return local_time.strftime("%Y-%m-%d %H:%M:%S")
-        
-    def get_seconds_to_look_back():
-        """Returns SECONDS_TO_LK_BACK as an int."""
-        return int(os.getenv("SECONDS_TO_LK_BACK", "3600"))  # fallback to 1 hour if unset
 
     def parse_car_details_from_filename(file_name, detection_upload_dt_time):
         """
@@ -386,7 +385,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
     def process_train_pass_data(processed_pass_data):
         """Processes train pass details and returns a structured DataFrame."""
         main_body_data = []
-        
+
         for corridor, train_passes in processed_pass_data.items():
             for train_pass in train_passes:
                 train_symbol = train_pass.pass_data["Train Symbol"]
@@ -418,13 +417,13 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                         "Detection Car ID": detection_car_id,
                         "Open Doors": len(detection['crops']['crops']),
                     })
-                    
+
                     # Update detection timestamps
                     detection["detection_data"]["Created at"] = detection_created_at_mt
-                
+
                 # Update train arrival time
                 train_pass.pass_data["Train Arrival Date/Time"] = trn_arrival_dt_mt
-        
+
         return pd.DataFrame(main_body_data)
 
     def group_by_train_symbol(grouped_corridors):
@@ -483,32 +482,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         return parsed_files
 
-
-    def prepare_pass_files(recent_passes, local_mode, container_client=None, local_dir=None):
-        
-        """
-        Prepares a list of pass files with image bytes, filenames, and timestamps.
-
-        Args:
-            recent_passes (list): List of recent pass blobs or local file paths.
-            local_mode (bool): Whether the function is running locally.
-            container_client (BlobContainerClient, optional): Required for non-local runs.
-            local_dir (str, optional): Directory for local files.
-
-        Returns:
-            list: A list of tuples (image_bytes, filename, creation_time).
-        """
-        if local_mode:
-            return [
-                (
-                    open(file, "rb").read(),
-                    os.path.basename(file),
-                    datetime.utcfromtimestamp(os.path.getmtime(file)).replace(tzinfo=pytz.UTC),
-                )
-                for file in recent_passes
-            ]
-        else:
-            return download_passes(container_client, recent_passes)
         
     def enrich_with_train_data(car_detail_list, procd_train_data):
         """
@@ -541,11 +514,11 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         try:
             train_data = json.loads(train_data["notebook_output"]["result"].strip("'"))
             car_detail_list.extend([
-                train_data['data']['trn_id'].strip(),
-                train_data['data']['dest_city_frefrm'].strip(),
-                train_data['data']['dest_st'].strip(),
+                train_data['trn_id'].strip(),
+                train_data['dest_city_frefrm'].strip(),
+                train_data['dest_st'].strip(),
             ])
-            symbol_car_key = f"{train_data['data']['trn_id'].strip()}-{car_id}"
+            symbol_car_key = f"{train_data['trn_id'].strip()}-{car_id}"
         except KeyError:
             car_detail_list.extend(["SymbolNotFound", "NA", "NA"])
             symbol_car_key = f"SymbolNotFound-{car_id}"
@@ -810,21 +783,25 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             # 🔥 Extract the email greeting text (NOT a dataframe)
             email_body_text = generate_email_body_text(corridor, train_passes).iloc[0, 0]  # Extract as plain text
 
-            # 🔥 Process train details (for the main email)
-            train_pass_df = process_train_pass_data(processed_pass_data)  # ✅ Do NOT transpose this
-
             # 🔥 Prepare `.eml` attachment content (Start with greeting)
             attachment_html = f"<p>{email_body_text}</p>"  # Render greeting properly
-            
+
+            # 🔥 Aggregate all train passes for the corridor
+            train_passes_html = ""  # This will hold all train passes and their detections
             for train_pass in train_passes:
+                # Remove the "Destination Corridor" key
+                train_pass.pass_data.pop("Destination Corridor", None)
+
+                # Process train pass details
                 train_details_html = pd.DataFrame([train_pass.pass_data]).T.to_html(index=True, header=False)  # ✅ Transposed
 
-                # 🔥 Process each detection separately (Transposed, NOT in a dataframe for email body)
+                # Process detections for the train pass
                 detection_html_blocks = []
                 for detection in train_pass.pass_detections:
+
                     detection_df = pd.DataFrame([detection["detection_data"]]).T.to_html(index=True, header=False)  # ✅ Transposed
 
-                    # 🔥 Embed images directly BELOW the detection entry
+                    # Embed images directly BELOW the detection entry
                     images_html = ""
                     if "crops" in detection and "crops" in detection["crops"]:
                         for crop_image in detection["crops"]["crops"]:
@@ -832,88 +809,43 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                             crop_image.save(crop_buffer, format="JPEG")
                             crop_bytes = crop_buffer.getvalue()
                             crop_encoded = base64.b64encode(crop_bytes).decode()
-                            images_html += f'<img src="data:image/jpeg;base64,{crop_encoded}" width="2200"><br>'
+                            images_html += f'<img src="data:image/jpeg;base64,{crop_encoded}" width="1280"><br>'
 
                     detection_html_blocks.append(f"{detection_df}{images_html}")
 
-                # 🔥 Apply styling to remove table borders for `.eml` attachments
-                clean_html = (
-                    '<style>'
-                    '.dataframe {border: none; text-align: left; white-space: nowrap;}'
-                    '.dataframe td, .dataframe th {border: none !important; text-align: left; padding: 0 10px;}'
-                    '</style>'
+                # Combine train pass details and its detections
+                train_passes_html += (
+                    f"<strong>Train Pass Details:</strong><br>{train_details_html}<br>"
+                    f"<strong>Detections:</strong><br>{''.join(detection_html_blocks)}<br><hr>"
                 )
 
-                # 🔥 Merge all train & detection info for the `.eml`
-                full_attachment_html = (
-                    f"{clean_html}{attachment_html}<br>"
-                    f"<strong>Train Pass:</strong><br>{train_details_html}<br>"
-                    f"<strong>Detections:</strong><br>{''.join(detection_html_blocks)}"
-                )
+            # 🔥 Apply styling to remove table borders for `.eml` attachments
+            clean_html = (
+                '<style>'
+                '.dataframe {border: none; text-align: left; white-space: nowrap;}'
+                '.dataframe td, .dataframe th {border: none !important; text-align: left; padding: 0 10px;}'
+                '</style>'
+            )
 
-                # 🔥 Attach `.eml` files with properly formatted data
-                subject = "RoboRailCop: Open Intermodal Container/Trailer Door Detected"
-                attachments.append(create_mail_attachment(full_attachment_html, subject, corridor))
+            # 🔥 Merge all train & detection info for the `.eml`
+            full_attachment_html = (
+                f"{clean_html}{attachment_html}<br>"
+                f"{train_passes_html}"  # Add all train passes and their detections
+            )
 
-            # 🔥 The main email should NOT contain greeting or images
-            final_email_df = train_pass_df  # ✅ Do NOT transpose this
-            main_body_df = pd.concat([main_body_df, final_email_df], ignore_index=True)
+            # 🔥 Attach a single `.eml` file for the entire corridor
+            subject = "RoboRailCop: Open Intermodal Container/Trailer Door Detected"
+            attachments.append(create_mail_attachment(full_attachment_html, subject, corridor))
 
-        return main_body_df, attachments  # 🔥 `.eml` files have transposed data, main email does NOT!
+            # 🔥 Add train pass data to the main email body
+            train_pass_df = process_train_pass_data({corridor: train_passes})  # ✅ Process the current corridor's data
+            main_body_df = pd.concat([main_body_df, train_pass_df], ignore_index=True)
 
-    def process_images_for_email(detections, max_email_size=35 * 1024 * 1024):
-        """Processes images and returns a list of Base64-encoded images and attachments."""
-        images = []
-        total_image_size = 0
-        
-        for detection in detections:
-            if "crops" in detection and "crops" in detection["crops"] and detection["crops"]["crops"]:
-                for crop_image in detection["crops"]["crops"]:
-                    try:
-                        crop_buffer = io.BytesIO()
-                        crop_image.save(crop_buffer, format="JPEG")
-                        crop_bytes = crop_buffer.getvalue()
-                        crop_encoded = base64.b64encode(crop_bytes).decode()
-
-                        images.append({
-                            "Encoded Image": f'<img src="data:image/jpeg;base64,{crop_encoded}" width="2200">',
-                            "Size": len(crop_bytes)
-                        })
-                        total_image_size += len(crop_bytes)
-                    except IOError:
-                        raise ValueError("Invalid crop image data")
-
-        # Resize images if needed
-        if total_image_size > max_email_size:
-            remaining_space = max_email_size - total_image_size
-            avg_space_per_image = remaining_space // len(images) if images else 0
-
-            resized_images = []
-            for img in images:
-                if img["Size"] > avg_space_per_image:
-                    img_obj = Image.open(io.BytesIO(base64.b64decode(img["Encoded Image"].split(",")[1])))
-                    scaling_factor = (avg_space_per_image / img["Size"]) ** 0.5
-                    new_width, new_height = int(img_obj.width * scaling_factor), int(img_obj.height * scaling_factor)
-                    img_obj = img_obj.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-                    buffered = io.BytesIO()
-                    img_obj.save(buffered, format="JPEG")
-                    img_bytes = buffered.getvalue()
-
-                    resized_images.append({
-                        "Encoded Image": f'<img src="data:image/jpeg;base64,{base64.b64encode(img_bytes).decode()}" width="2200">',
-                        "Size": len(img_bytes)
-                    })
-                else:
-                    resized_images.append(img)
-
-            return resized_images
-        else:
-            return images
+        return main_body_df, attachments  # 🔥 `.eml` files have consolidated data for each corridor!
 
     def crop_and_normalize(detection, target_width=1280, target_height=768):
         """
-        Crop a 2200x1024 region around the detection center while ensuring the crop stays within image boundaries.
+        Crop a region around the detection center while ensuring the crop stays within image boundaries.
         Resizes the image **before cropping** to ensure correct detection alignment.
         
         Parameters:
@@ -990,7 +922,7 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         return grouped_regions
 
-    def process_car_images(grouped_cars, model, confidence_threshold, crop_size=(1280, 768), proximity_threshold=5000):
+    def process_car_images(grouped_cars, model, confidence_threshold, proximity_threshold=5000):
         """
         Process car images, run inference on in-memory images (from Azure), group detections into regions,
         pare down car_details to the highest camera entry, and append crops to that entry.
@@ -998,7 +930,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         Parameters:
             grouped_cars (dict): Original nested structure of grouped_cars (corridor -> train_symbol -> car_id -> detections).
             model (YOLO model): Pretrained YOLO model for inference.
-            crop_size (tuple): Size of the crop (width, height).
             confidence_threshold (float): Minimum confidence to consider a detection.
             proximity_threshold (int): Maximum pixel distance between x-coordinates to group detections into regions.
         
@@ -1077,26 +1008,29 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
             max_total_size (int): Total size allowed for all attachments in bytes.
 
         Returns:
-            List[Tuple[str, bytes]]: List of (filename, image_bytes) tuples for attachment.
+            List[Tuple[bytes, str]]: List of (image_bytes, filename) tuples for attachment.
         """
         image_entries = []
         total_size = 0
 
-        for i, detection in enumerate(detections):
-            if "car_image" in detection:
-                image = detection["car_image"]
-                buffer = io.BytesIO()
-                image.save(buffer, format="JPEG")
-                img_bytes = buffer.getvalue()
-                size = len(img_bytes)
+        for corridor, corridor_symbols in detections.items():
+            for symbol, symbol_detections in corridor_symbols.items():
+                for car, det_list in symbol_detections.items():
+                    for det in det_list:
+                        if det[13]:
+                            image = det[13]  # This is the raw image bytes
+                            size = len(image)
 
-                image_entries.append({
-                    "image": image,
-                    "bytes": img_bytes,
-                    "size": size,
-                    "filename": f"car_{i+1}.jpg"
-                })
-                total_size += size
+                            # Convert bytes to PIL.Image for resizing if needed
+                            pil_image = Image.open(io.BytesIO(image))
+
+                            image_entries.append({
+                                "image": pil_image,  # Store the PIL.Image object for resizing
+                                "bytes": image,  # Store the original bytes
+                                "size": size,
+                                "filename": f"{det[0]}-{det[1]}.jpg"
+                            })
+                            total_size += size
 
         # Resize images if needed
         if total_size > max_total_size:
@@ -1108,12 +1042,14 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
                     new_h = int(entry["image"].height * scale)
                     resized = entry["image"].resize((new_w, new_h), Image.Resampling.LANCZOS)
 
+                    # Convert resized image back to bytes
                     buf = io.BytesIO()
                     resized.save(buf, format="JPEG")
                     entry["bytes"] = buf.getvalue()
                     entry["size"] = len(entry["bytes"])
 
-        return [(entry["filename"], entry["bytes"]) for entry in image_entries]
+        # Return tuples in the correct order (attachment, filename)
+        return [(entry["bytes"], entry["filename"]) for entry in image_entries]
 
     def execute_notebook(databricks_instance, token, notebook_path, car_id,
                             car_number):
@@ -1166,14 +1102,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         output_url = f"{databricks_instance}/api/2.0/jobs/runs/get-output?run_id={run_id}"
         output_response = requests.get(output_url, headers=headers)
         return output_response.json()
-    
-    def get_databricks_config():
-        """Returns Databricks credentials and notebook path."""
-        return (
-            os.getenv("DATABRICKS_INSTANCE"),
-            os.getenv("DATABRICKS_TOKEN"),
-            os.getenv("DATABRICKS_NOTEBOOK_PTH"),
-        )
 
     def get_blob_service_client():
         account_url = os.environ.get("MIDS_IMG_STRG_URL")
@@ -1227,29 +1155,11 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
 
         return pass_list
         
-    def get_container_client():
-        """Initializes and returns the Azure Blob container client."""
-        blob_service_client = BlobServiceClient.from_connection_string(
-            os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-        )
-        container_name = os.getenv("MIDS_IMG_CONT_NAME")
-        return blob_service_client.get_container_client(container_name)
-
-    if myTimer.past_due:
-        logging.info("The timer is past due!")
-
-    logger = logging.getLogger(__name__)
-    if not LOCAL_RUN:
-        from opencensus.ext.azure.log_exporter import AzureLogHandler
-        logger.addHandler(
-            AzureLogHandler(
-                connection_string=os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
-            )
-        )
-        
     processed_symbol_car_keys = {}
     procd_train_data = {}
     car_list = []
+    tracking_dict = load_tracking_dict()
+    logger = initialize_logger()
 
     if not LOCAL_RUN:
         blob_service_client = get_blob_service_client()
@@ -1259,7 +1169,6 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         recent_passes = get_recent_passes(
             container_client, seconds=int(os.environ.get("SECONDS_TO_LK_BACK"))
         )
-        tracking_dict = load_tracking_dict()
     else:
         recent_passes = [
             os.path.join(LOCAL_PASS_DIR, file) for file in os.listdir(LOCAL_PASS_DIR)
@@ -1311,12 +1220,14 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         car_grouped = group_by_car_id(symbol_grouped)
 
         model = load_model_from_blob()
-        detection_dict = process_car_images(car_grouped, model, 0.2)
+        detection_dict = process_car_images(car_grouped, model, 0.2, os.environ.get("DET_GRP_PRX", 5000))
         processed_data = create_train_pass_objects(detection_dict)
 
         if processed_data:
+            full_sized_img_lst = prepare_full_size_attachments(detection_dict, 20*1024*1024)
             body, attachments = format_email_body(processed_data)
-            email_msg = compose_email(body.to_html(index=False), attachments, logger)
+            all_attachments = attachments + full_sized_img_lst
+            email_msg = compose_email(body.to_html(index=False), all_attachments, logger)
             send_email(email_msg, logger)
 
     # 🔥 Step 4: Update tracking dict even if no new passes were found
@@ -1324,4 +1235,4 @@ def rrc_trigger(myTimer: func.TimerRequest) -> None:
         tracking_dict = update_tracking_dict(tracking_dict, processed_symbol_car_keys)
         save_tracking_dict(tracking_dict)
 
-    logging.info("Python timer trigger function execution")
+    logging.info("Python timer trigger function executed")
